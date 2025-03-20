@@ -1,0 +1,9 @@
+name: semif_plantdet
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python==3.11
+  - pip
+  - hydra-core
+  - omegaconf

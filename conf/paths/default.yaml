@@ -1,0 +1,17 @@
+# path to root directory
+# this relies on main.py to be run from the project root
+root_dir: ${hydra:runtime.cwd}
+
+# path to data directory
+data_dir: ${paths.root_dir}/data/
+
+# path to logging directory
+log_dir: ${paths.root_dir}/logs/
+
+# path to database
+db_path: /Users/jbshah/_p/test/agir.db
+
+lts_locations:
+  - /mnt/research-projects/s/screberg/longterm_images
+  - /mnt/research-projects/s/screberg/GROW_DATA
+  - /mnt/research-projects/s/screberg/longterm_images2

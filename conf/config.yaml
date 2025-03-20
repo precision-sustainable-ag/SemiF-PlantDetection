@@ -1,0 +1,5 @@
+defaults:
+  # - data_filters: default
+  - database: training_dataset
+  - paths: default
+  - _self_
