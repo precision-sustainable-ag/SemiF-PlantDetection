@@ -3,3 +3,6 @@ defaults:
   - database: training_dataset
   - paths: default
   - _self_
+
+tasks:
+  - training_dataset

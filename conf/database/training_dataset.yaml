@@ -1,21 +1,33 @@
 # Configuration for generating training dataset from SQLite database
 
 # Database settings
-db_path: ${paths.sql_database} # This will be inherited from paths config
+db_path: ${paths.db_path} # This will be inherited from paths config
 
 # Training dataset settings
 dataset:
   # Number of images to include in the training dataset
-  size: 1000
+  size: 100
   
   # Class IDs to prioritize - these will be selected first
-  priority_class_ids: [23, 24, 25]
+  # along with classes from latest batches from each growing season
+  priority_species: [26]  # adding maize as a priority class
   
-  # Percentage of dataset to be filled with priority classes (0.0-1.0)
-  priority_ratio: 0.6
+  # Ratios for selecting images from each group
+  # should sum to 1.0
+  ratios:
+    priority_species: 0.6
+    other_species: 0.3
+    non_targets: 0.1
+  
+  # Date-based selection settings
+  selection:
+    # For priority species: percentage from recent batches (the rest will be sampled from older batches)
+    priority_recent_ratio: 0.7
+    # For other species: percentage from recent batches (the rest will be sampled from older batches)
+    other_recent_ratio: 0.6
   
   # Minimum images per class (if available)
-  min_per_class: 50
+  min_per_class: 6
   
   # Output path for dataset
   output_path: ${paths.data_dir}/training_dataset
