@@ -10,7 +10,6 @@ from typing import List, Dict, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from omegaconf import DictConfig
-import hydra
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -30,9 +29,7 @@ class ImageDownloader:
         # Find the most recent dataset directory
         base_dataset_path = Path(cfg.database.dataset.output_path)
         if base_dataset_path.exists():
-            # Get all subdirectories in the output path that are timestamp directories
             timestamp_dirs = [d for d in base_dataset_path.iterdir() if d.is_dir()]
-            # Sort by name (timestamps) in descending order to get the latest
             timestamp_dirs.sort(reverse=True)
             
             if timestamp_dirs:
@@ -48,7 +45,6 @@ class ImageDownloader:
 
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
-        # Storage base paths from lts_locations
         self.storage_bases = []
         for lts_location in cfg.paths.lts_locations:
             self.storage_bases.append(Path(lts_location, "semifield-developed-images"))
@@ -129,6 +125,7 @@ class ImageDownloader:
     def get_unique_images(self, df: pd.DataFrame) -> List[Dict[str, str]]:
         """
         Extracts unique batch_id and image_id pairs from the DataFrame.
+        Returns only images that don't exist locally.
 
         Args:
             df (pd.DataFrame): DataFrame containing image information.

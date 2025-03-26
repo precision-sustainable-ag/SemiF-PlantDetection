@@ -44,9 +44,11 @@ class TrainingDatasetGenerator:
         
         # Create timestamped output directory
         base_output_path = cfg.dataset.output_path
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.output_path = os.path.join(base_output_path, timestamp)
-        
+        timestamp_date = datetime.now().strftime("%Y-%m-%d")
+        timestamp_time = datetime.now().strftime("%H-%M-%S")
+        self.output_path = os.path.join(base_output_path, timestamp_date, timestamp_time)
+        os.makedirs(self.output_path, parents=True,exist_ok=True)
+
         # Set random seed for reproducibility
         random.seed(self.random_seed)
         
@@ -54,10 +56,7 @@ class TrainingDatasetGenerator:
         self.conn = sqlite3.connect(self.db_path)
         log.info(f"Connected to database: {self.db_path}")
         
-        # Create output directory if it doesn't exist
-        os.makedirs(self.output_path, exist_ok=True)
-        log.info(f"Created timestamped output directory: {self.output_path}")
-        
+
     def fetch_validated_images_without_non_targets(self) -> pd.DataFrame:
         """
         Fetch all validated images from the semif_developed_images table.
@@ -396,7 +395,10 @@ class TrainingDatasetGenerator:
         #                                                 'has_priority_species'])
         # non_target_images = self.fetch_validated_images_with_non_targets()
         # selected_images = pd.concat([selected_images, non_target_images])
-        
+        if len(selected_images) != selected_images['image_id'].nunique():
+            log.error("Duplicate image_ids in the selected images")
+            raise ValueError("Duplicate image_ids in the selected images")
+
         # Save the dataset
         self.save_dataset(selected_images)
         
