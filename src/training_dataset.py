@@ -37,11 +37,15 @@ class TrainingDatasetGenerator:
         # self.priority_class_ids = None
         # self.priority_ratio = cfg.dataset.priority_ratio
         self.min_per_class = cfg.dataset.min_per_class
-        self.output_path = cfg.dataset.output_path
         self.random_seed = cfg.dataset.random_seed
         # self.priority_recent_ratio = cfg.dataset.selection.priority_recent_ratio
-        # self.other_recent_ratio = cfg.dataset.selection.other_recent_ratio
+        self.other_species_recency_ratio = cfg.dataset.other_species_recency_ratio
         self.ratios = cfg.dataset.ratios
+        
+        # Create timestamped output directory
+        base_output_path = cfg.dataset.output_path
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_path = os.path.join(base_output_path, timestamp)
         
         # Set random seed for reproducibility
         random.seed(self.random_seed)
@@ -52,6 +56,7 @@ class TrainingDatasetGenerator:
         
         # Create output directory if it doesn't exist
         os.makedirs(self.output_path, exist_ok=True)
+        log.info(f"Created timestamped output directory: {self.output_path}")
         
     def fetch_validated_images_without_non_targets(self) -> pd.DataFrame:
         """
@@ -86,6 +91,30 @@ class TrainingDatasetGenerator:
         log.info("Fetching validated images from database")
         df = pd.read_sql_query(query, self.conn)
         log.info(f"Found {len(df)} validated images")
+        return df
+    
+    def fetch_validated_images_with_non_targets(self) -> pd.DataFrame:
+        """
+        Fetch all validated images from the semif_developed_images table which have atleast one non-target weed.
+        Query:
+        Inner query gets x images with most non-target weeds
+        Outer query gets all the necessary data for those images
+        """
+        non_targets_count = int(self.dataset_size * self.ratios.non_targets)
+        query = f"""
+        select batch_id, image_id, validated, exif_meta, camera_info, annotations, categories, season
+        from semif_developed_images where image_id in (
+            select image_id
+            from semif_developed_images, json_each(annotations) as annotation_each
+            where json_extract(annotation_each.value, '$.non_target_weed') = TRUE
+            and json_extract(annotation_each.value, '$.non_target_weed_pred_conf') > 0.8
+            group by image_id
+            order by count(*) desc
+            limit {non_targets_count};
+        )
+        """
+        df = pd.read_sql_query(query, self.conn)
+        log.info(f"Found {len(df)} validated images with non-target weeds")
         return df
     
     def extract_date_from_batch_id(self, batch_id: str) -> datetime:
@@ -142,6 +171,7 @@ class TrainingDatasetGenerator:
                     class_ids.add(class_id)
         except (json.JSONDecodeError, TypeError):
             # TODO: add a warning
+            log.warning(f"Error decoding annotations for img")
             pass
         
         return class_ids
@@ -168,11 +198,6 @@ class TrainingDatasetGenerator:
             .first()  # Get the first entry for each group, which is an arbitrary image from the latest batch
             .reset_index()
         )
-
-        # self.save_dataset(latest_batches)
-        # exit()
-
-        log.info(f"Latest batches: {latest_batches['batch_id'].unique()}")
         # Extract class_ids from the annotations of these batches
         batches_to_check = df[df['batch_id'].isin(latest_batches['batch_id'])]
 
@@ -186,7 +211,6 @@ class TrainingDatasetGenerator:
                     class_ids_count[class_id] = 1
 
         # Get the top 10 most occurring classes
-        log.info(f"class_ids_count: {class_ids_count}")
         top_classes = sorted(class_ids_count.items(), key=lambda x: x[1], reverse=True)[:10]
         top_class_ids, top_class_counts = zip(*top_classes) if top_classes else ([], [])
 
@@ -236,7 +260,7 @@ class TrainingDatasetGenerator:
             log.info(f"Trimming dataset from {len(selected_images)} to {total_max_size} images.")
             selected_images = selected_images.sample(n=total_max_size, random_state=self.random_seed)
         elif len(selected_images) < total_max_size:
-            log.warning(f"Not enough images to fill the dataset, selecting random number of images")
+            log.warning(f"Not enough images to fill the dataset, selecting additional random number of images")
             selected_images = pd.concat([selected_images, df.sample(n=total_max_size - len(selected_images), random_state=self.random_seed)])
         else:
             log.info(f"Selected {len(selected_images)} images")
@@ -265,62 +289,31 @@ class TrainingDatasetGenerator:
 
         # Flag images with priority classes
         self.priority_species, latest_batches = self.get_priority_species_and_batches(df)
-        log.info(f"Priority species: {self.priority_species}, length: {len(self.priority_species)}")
         df['has_priority_species'] = df['class_ids'].apply(
             lambda ids: any(c_id in self.priority_species for c_id in ids)
         )
-        # Get priority images
+        # Get priority images from latest batches
         priority_images = df[df['has_priority_species'] & df['batch_id'].isin(latest_batches)]
         priority_count = min(int(self.dataset_size * self.ratios.priority_species), len(priority_images))
-        priority_images = self.create_balanced_dataset(priority_images, self.priority_species, priority_count)
-        # self.save_dataset(priority_images)
-        # exit()
-
+        selected_priority = self.create_balanced_dataset(priority_images, self.priority_species, priority_count)
+        
+        # Get other images
+        # TODO: get class ids for non-priority species
+        # TODO: thought - forget about priority species when selecting other images
+        # balance - because that'll give us an equal mix of classes
+        # then generate a balanced dataset of other_images (first give latest batches, then older batches - in recency ratio)
         df_sorted = df.sort_values('batch_date', ascending=False)
-        other_images = df_sorted[~df_sorted['has_priority_species']]
-        
-        # Calculate how many images to take from each group
-        
-        other_count = min(self.dataset_size - priority_count, len(other_images))
-        
+        # other_images = df_sorted[~df_sorted['has_priority_species'] & ~df_sorted['image_id'].isin(priority_images['image_id'])]
+        other_images = df_sorted[~df_sorted['image_id'].isin(priority_images['image_id'])]
+        other_count = min(int(self.dataset_size * self.ratios.other_species), len(other_images))
         log.info(f"Selecting {priority_count} priority images and {other_count} other images")
         
-        # Better selection strategy to balance recent and older batches
-        
-        # TODO: select random images from each group
-        # but head "other" images to get newer batches
-        # For priority images: 
-        # - Use self.priority_recent_ratio from newest batches
-        # - The rest randomly sampled from older batches to ensure diversity
-        if len(priority_images) > 0:
-            recent_count = int(priority_count * self.ratios.priority_recent_ratio)
-            diverse_count = priority_count - recent_count
-            
-            # Get the most recent priority images
-            selected_recent_priority = priority_images.head(recent_count)
-            
-            # Get a diverse sample from the remaining priority images
-            remaining_priority = priority_images.iloc[recent_count:] if recent_count < len(priority_images) else pd.DataFrame()
-            
-            if not remaining_priority.empty and diverse_count > 0:
-                selected_diverse_priority = remaining_priority.sample(
-                    min(diverse_count, len(remaining_priority)), 
-                    random_state=self.random_seed
-                )
-                selected_priority = pd.concat([selected_recent_priority, selected_diverse_priority])
-            else:
-                selected_priority = selected_recent_priority
-        else:
-            selected_priority = pd.DataFrame()
-        
-        # For other images:
-        # - Use self.other_recent_ratio from newest batches
-        # - The rest randomly sampled from older batches
+        # TODO: Better selection strategy to balance recent and older batches
         if len(other_images) > 0:
-            recent_count = int(other_count * self.other_recent_ratio)
+            recent_count = int(other_count * self.other_species_recency_ratio)
             diverse_count = other_count - recent_count
             
-            # Get the most recent other images
+            # Get the most recent other images (will probably be from one batch only)
             selected_recent_other = other_images.head(recent_count)
             
             # Get a diverse sample from the remaining other images
@@ -340,62 +333,7 @@ class TrainingDatasetGenerator:
         # Combine and return
         selected = pd.concat([selected_priority, selected_other])
         
-        # Ensure we have minimum images per class if possible
-        # TODO: also add non target weeds, color checker data - either here or in a separate function
-        # selected = self.ensure_class_balance(df_sorted, selected)
-
-        # if self.min_per_class > 0:
-        #     selected = self.ensure_class_balance(df_sorted, selected)
-        
         return selected.sample(frac=1, random_state=self.random_seed)  # Shuffle the final selection
-    
-    def ensure_class_balance(self, all_images: pd.DataFrame, selected: pd.DataFrame) -> pd.DataFrame:
-        """
-        Ensure that we have at least min_per_class images for each class ID if possible.
-        
-        Args:
-            all_images (pd.DataFrame): All validated images
-            selected (pd.DataFrame): Currently selected images
-            
-        Returns:
-            pd.DataFrame: DataFrame with balanced class representation
-        """
-        # TODO: improve this whole function
-
-        # Get all unique class IDs across all images
-        all_class_ids = set()
-        for class_set in all_images['class_ids']:
-            all_class_ids.update(class_set)
-        
-        # Check if we have the minimum number of images for each class
-        for class_id in all_class_ids:
-            # Count images with this class ID in the selected set
-            class_count = sum(1 for ids in selected['class_ids'] if class_id in ids)
-            
-            # If we don't have enough, try to add more
-            if class_count < self.min_per_class:
-                # Find images with this class ID that aren't already selected
-                additional_needed = self.min_per_class - class_count
-                potential_images = all_images[~all_images['image_id'].isin(selected['image_id'])]
-                potential_images = potential_images[
-                    potential_images['class_ids'].apply(lambda ids: class_id in ids)
-                ]
-                
-                # Sort by date and take what we need
-                potential_images = potential_images.sort_values('batch_date', ascending=False)
-                additional_images = potential_images.head(additional_needed)
-                
-                # Add to selected
-                if not additional_images.empty:
-                    log.info(f"Adding {len(additional_images)} images for class_id {class_id}")
-                    selected = pd.concat([selected, additional_images])
-        
-        # If we've exceeded our desired size, trim down
-        if len(selected) > self.dataset_size:
-            log.info(f"Trimming dataset from {len(selected)} to {self.dataset_size} images")
-            selected = selected.sample(self.dataset_size, random_state=self.random_seed)
-        
-        return selected
     
     
     def save_dataset(self, images: pd.DataFrame) -> None:
@@ -417,11 +355,11 @@ class TrainingDatasetGenerator:
             "created_at": datetime.now().isoformat(),
             "dataset_size": len(images),
             "priority_class_ids": list(self.priority_species),
-            "species_ratios": json.dumps(self.ratios),
-            # "priority_recent_ratio": self.priority_recent_ratio,
-            # "other_recent_ratio": self.other_recent_ratio,
+            "species_ratios": dict(self.ratios),
+            "other_species_recency_ratio": self.other_species_recency_ratio,
             "min_per_class": self.min_per_class,
             "random_seed": self.random_seed,
+            "output_path": self.output_path
         }
         
         metadata_path = os.path.join(self.output_path, "metadata.json")
@@ -452,6 +390,12 @@ class TrainingDatasetGenerator:
         # Select images for training
         selected_images = self.select_training_images(target_images)
         
+        # Drop specified columns from the selected images DataFrame
+        # selected_images = selected_images.drop(columns=['class_ids', 'batch_date', 
+        #                                                 'growing_season_bucket', 'location', 
+        #                                                 'has_priority_species'])
+        # non_target_images = self.fetch_validated_images_with_non_targets()
+        # selected_images = pd.concat([selected_images, non_target_images])
         
         # Save the dataset
         self.save_dataset(selected_images)

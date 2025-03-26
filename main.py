@@ -8,6 +8,10 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.append("src")
 
+# Import task modules for registration
+import training_dataset
+import download_images
+
 log = logging.getLogger(__name__)
 
 
@@ -18,11 +22,18 @@ def run(cfg: DictConfig) -> None:
 
     for tsk in cfg.tasks:
         try:
-            task = get_method(f"{tsk}.main")
+            # Map task names to module names if needed
+            task_mapping = {
+                "training_dataset": "training_dataset.main",
+                "download_images": "download_images.main"
+            }
+            
+            task_function = task_mapping.get(tsk, f"{tsk}.main")
+            task = get_method(task_function)
             task(cfg)
 
         except Exception as e:
-            log.exception("Failed")
+            log.exception(f"Failed to execute task {tsk}: {e}")
             return
 
 
