@@ -3,3 +3,12 @@ defaults:
   - database: training_dataset
   - paths: default
   - _self_
+
+tasks:
+  - training_dataset
+  - download_images
+
+images:
+  output_path: ${paths.data_dir}/training_images
+  parallel: true
+  parallel_workers: 8 

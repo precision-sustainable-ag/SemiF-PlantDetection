@@ -7,3 +7,10 @@ dependencies:
   - pip
   - hydra-core
   - omegaconf
+  - pandas
+  - numpy
+  - sqlite
+  # - opencv-python
+  # - matplotlib
+  # - seaborn
+  # - scikit-learn
