@@ -47,7 +47,7 @@ class TrainingDatasetGenerator:
         timestamp_date = datetime.now().strftime("%Y-%m-%d")
         timestamp_time = datetime.now().strftime("%H-%M-%S")
         self.output_path = os.path.join(base_output_path, timestamp_date, timestamp_time)
-        os.makedirs(self.output_path, parents=True,exist_ok=True)
+        os.makedirs(self.output_path, exist_ok=True)
 
         # Set random seed for reproducibility
         random.seed(self.random_seed)
@@ -109,8 +109,8 @@ class TrainingDatasetGenerator:
             and json_extract(annotation_each.value, '$.non_target_weed_pred_conf') > 0.8
             group by image_id
             order by count(*) desc
-            limit {non_targets_count};
-        )
+            limit {non_targets_count}
+        );
         """
         df = pd.read_sql_query(query, self.conn)
         log.info(f"Found {len(df)} validated images with non-target weeds")
@@ -188,9 +188,6 @@ class TrainingDatasetGenerator:
         Returns:
             Tuple[Set[int], Set[str]]: top class ids, batches
         """
-        # Extract location from batch_id (assuming format like 'location_YYYY-MM-DD')
-        df['location'] = df['batch_id'].apply(lambda x: x.split('_')[0])
-        
         latest_batches = (
             df.sort_values('batch_date', ascending=False)  # Sort by batch_date first
             .groupby(['growing_season_bucket', 'location'])
@@ -260,13 +257,15 @@ class TrainingDatasetGenerator:
             selected_images = selected_images.sample(n=total_max_size, random_state=self.random_seed)
         elif len(selected_images) < total_max_size:
             log.warning(f"Not enough images to fill the dataset, selecting additional random number of images")
-            selected_images = pd.concat([selected_images, df.sample(n=total_max_size - len(selected_images), random_state=self.random_seed)])
+            unselected_images = df[~df['image_id'].isin(selected_images['image_id'])]
+            additional_images = unselected_images.sample(n=total_max_size - len(selected_images), random_state=self.random_seed)
+            selected_images = pd.concat([selected_images, additional_images])
         else:
             log.info(f"Selected {len(selected_images)} images")
 
         return selected_images
 
-    def select_training_images(self, df: pd.DataFrame) -> pd.DataFrame:
+    def select_target_images(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Select images for the training dataset based on criteria:
         1. Prioritize recent batches
@@ -284,7 +283,9 @@ class TrainingDatasetGenerator:
         df['batch_date'] = df['batch_id'].apply(self.extract_date_from_batch_id)
         df['growing_season_bucket'] = df['season'].apply(self.get_growing_season_bucket)
         # ignore unknown growing season buckets, ideally there'll be none since db is clean
-        df = df[df['growing_season_bucket'] != 'unknown']   
+        df = df[df['growing_season_bucket'] != 'unknown']
+        # Extract location from batch_id (assuming format like 'location_YYYY-MM-DD')
+        df['location'] = df['batch_id'].apply(lambda x: x.split('_')[0])
 
         # Flag images with priority classes
         self.priority_species, latest_batches = self.get_priority_species_and_batches(df)
@@ -328,12 +329,31 @@ class TrainingDatasetGenerator:
                 selected_other = selected_recent_other
         else:
             selected_other = pd.DataFrame()
-        
         # Combine and return
         selected = pd.concat([selected_priority, selected_other])
         
         return selected.sample(frac=1, random_state=self.random_seed)  # Shuffle the final selection
     
+    def select_non_target_images(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Select non-target images for the training dataset
+        1. Get images with most non-target weeds from the database
+        2. Add class_ids, batch_date, growing_season_bucket, location, has_priority_species (to match target images)
+        """
+        df = self.fetch_validated_images_with_non_targets()
+        df['class_ids'] = df['annotations'].apply(self.get_class_ids_from_annotations)
+        df['batch_date'] = df['batch_id'].apply(self.extract_date_from_batch_id)
+        df['growing_season_bucket'] = df['season'].apply(self.get_growing_season_bucket)
+        df = df[df['growing_season_bucket'] != 'unknown']
+
+        # Extract location from batch_id (assuming format like 'location_YYYY-MM-DD')
+        df['location'] = df['batch_id'].apply(lambda x: x.split('_')[0])
+
+        df['has_priority_species'] = df['class_ids'].apply(
+            lambda ids: any(c_id in self.priority_species for c_id in ids)
+        )
+        
+        return df
     
     def save_dataset(self, images: pd.DataFrame) -> None:
         """
@@ -344,7 +364,6 @@ class TrainingDatasetGenerator:
         """
         # Save to CSV
         output_images_path = os.path.join(self.output_path, "training_images.csv")
-        log.info(f"{images.dtypes}")
         images.to_csv(output_images_path, index=False)
         
         log.info(f"Saved {len(images)} images to {output_images_path}")
@@ -387,14 +406,10 @@ class TrainingDatasetGenerator:
         target_images = self.fetch_validated_images_without_non_targets()
         
         # Select images for training
-        selected_images = self.select_training_images(target_images)
+        selected_target_images = self.select_target_images(target_images)
+        selected_non_target_images = self.select_non_target_images(target_images)
         
-        # Drop specified columns from the selected images DataFrame
-        # selected_images = selected_images.drop(columns=['class_ids', 'batch_date', 
-        #                                                 'growing_season_bucket', 'location', 
-        #                                                 'has_priority_species'])
-        # non_target_images = self.fetch_validated_images_with_non_targets()
-        # selected_images = pd.concat([selected_images, non_target_images])
+        selected_images = pd.concat([selected_target_images, selected_non_target_images])
         if len(selected_images) != selected_images['image_id'].nunique():
             log.error("Duplicate image_ids in the selected images")
             raise ValueError("Duplicate image_ids in the selected images")

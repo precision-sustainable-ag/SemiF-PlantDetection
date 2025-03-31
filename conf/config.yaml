@@ -5,7 +5,7 @@ defaults:
   - _self_
 
 tasks:
-  # - training_dataset
+  - training_dataset
   - download_images
 
 images:
