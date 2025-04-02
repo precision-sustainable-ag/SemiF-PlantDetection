@@ -6,11 +6,13 @@ db_path: ${paths.db_path} # This will be inherited from paths config
 # Training dataset settings
 dataset:
   # Number of images to include in the training dataset
-  size: 1000
+  size: 10
   
   # Class IDs to prioritize - these will be selected first
   # along with classes from latest batches from each growing season
   priority_species: [26]  # adding maize as a priority class
+  
+  color_checker_id: 28
   
   # Ratios for selecting images from each group
   # should sum to 1.0
@@ -32,7 +34,7 @@ dataset:
   
   # Minimum images per class (if available)
   # Currently only used for priority species (when getting min images)
-  min_per_class: 3
+  min_per_class: 0
   
   # Output path for dataset
   # TODO: add a timestamp to the output path (like outputs)

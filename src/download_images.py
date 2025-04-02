@@ -26,21 +26,35 @@ class ImageDownloader:
         Args:
             cfg (DictConfig): Hydra configuration
         """
+        # TODO: util function for reusability
         # Find the most recent dataset directory
         base_dataset_path = Path(cfg.database.dataset.output_path)
         if base_dataset_path.exists():
-            timestamp_dirs = [d for d in base_dataset_path.iterdir() if d.is_dir()]
-            timestamp_dirs.sort(reverse=True)
-            
-            if timestamp_dirs:
-                self.dataset_path = timestamp_dirs[0]
-                log.info(f"Using most recent dataset directory: {self.dataset_path}")
+            date_dirs = [d for d in base_dataset_path.iterdir() if d.is_dir()]
+            date_dirs.sort(reverse=True)
+            if date_dirs:
+                # Now find the timestamp (hr-mm-ss) folders inside the most recent date directory
+                hr_min_sec_dirs = [d for d in date_dirs[0].iterdir() if d.is_dir()]
+                hr_min_sec_dirs.sort(reverse=True)
+                if hr_min_sec_dirs:
+                    self.dataset_path = hr_min_sec_dirs[0]
+                    log.info(f"Using most recent timestamp directory: {self.dataset_path}")
+                else:
+                    self.dataset_path = date_dirs[0]
+                    log.warning(f"No timestamp (hr-mm-ss) directories found, using recent date path: {self.dataset_path}")
             else:
                 self.dataset_path = base_dataset_path
                 log.warning(f"No timestamp directories found, using base path: {self.dataset_path}")
         else:
             self.dataset_path = base_dataset_path
             log.warning(f"Dataset path does not exist: {self.dataset_path}")
+            
+            if date_dirs:
+                self.dataset_path = date_dirs[0]
+                log.info(f"Using most recent dataset directory: {self.dataset_path}")
+            else:
+                self.dataset_path = base_dataset_path
+                log.warning(f"No timestamp directories found, using base path: {self.dataset_path}")
         
 
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")

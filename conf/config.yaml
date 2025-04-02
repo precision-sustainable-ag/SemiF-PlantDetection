@@ -5,10 +5,16 @@ defaults:
   - _self_
 
 tasks:
-  - training_dataset
-  - download_images
+  # - training_dataset
+  # - download_images
+  - cvat_formatter
 
 images:
   output_path: ${paths.data_dir}/training_images
   parallel: true
   parallel_workers: 8 
+
+cvat:
+  output_path: ${paths.data_dir}/cvat_dataset
+  default_image_width: 9560
+  default_image_height: 6368

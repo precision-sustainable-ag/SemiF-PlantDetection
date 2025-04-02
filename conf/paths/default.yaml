@@ -12,6 +12,9 @@ log_dir: ${paths.root_dir}/logs/
 db_path: /Users/jbshah/_p/test/agir.db
 
 lts_locations:
-  - /mnt/research-projects/s/screberg/longterm_images
-  - /mnt/research-projects/s/screberg/GROW_DATA
-  - /mnt/research-projects/s/screberg/longterm_images2
+  - /Volumes/screberg/longterm_images
+  - /Volumes/screberg/GROW_DATA
+  - /Volumes/screberg/longterm_images2
+  # - /mnt/research-projects/s/screberg/longterm_images
+  # - /mnt/research-projects/s/screberg/GROW_DATA
+  # - /mnt/research-projects/s/screberg/longterm_images2
