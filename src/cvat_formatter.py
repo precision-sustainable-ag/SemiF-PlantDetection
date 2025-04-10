@@ -78,7 +78,11 @@ class CVATFormatter:
         self.default_image_width = cfg.cvat.default_image_width
         self.default_image_height = cfg.cvat.default_image_height
         
+        # Store class mapping from config
+        self.class_mapping = cfg.cvat.class_mapping
+        
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
+        log.info(f"Using class mapping from config: {self.class_mapping}")
 
     def load_dataset(self) -> pd.DataFrame:
         """
@@ -168,18 +172,20 @@ class CVATFormatter:
                 if not bbox:
                     continue
                 
-                # Get class ID
-                class_id = annotation.get('category_class_id')
-                if class_id is None:
-                    continue
+                # Apply class mapping from config
+                if annotation.get('non_target_weed') is True:
+                    mapped_class_id = int(self.class_mapping.non_target)
+                elif annotation.get('category_class_id') == 28:
+                    mapped_class_id = int(self.class_mapping.color_checker)
+                else:
+                    mapped_class_id = int(self.class_mapping.plant)
                 
                 # Convert bounding box to YOLO format
                 center_x, center_y, norm_width, norm_height = self.convert_bbox_to_yolo_format(
                     bbox, image_width, image_height
                 )
-                
-                # Write to annotation file
-                f.write(f"{class_id} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
+                # Write to annotation file with mapped class ID
+                f.write(f"{mapped_class_id} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
         
         log.debug(f"Processed image {image_id}")
 
@@ -224,28 +230,20 @@ class CVATFormatter:
 
     def get_unique_class_ids(self, df: pd.DataFrame) -> Dict[int, str]:
         """
-        Extract unique class IDs from the dataset.
+        Return the class mapping defined in the configuration.
         
         Args:
-            df (pd.DataFrame): DataFrame containing image information
+            df (pd.DataFrame): DataFrame containing image information (not used)
             
         Returns:
-            Dict[int, str]: Dictionary mapping class IDs to placeholder names
+            Dict[int, str]: Dictionary mapping class IDs to class names
         """
-        class_ids = set()
-        
-        for _, row in df.iterrows():
-            try:
-                annotations = json.loads(row['annotations'])
-                for annotation in annotations:
-                    class_id = annotation.get('category_class_id')
-                    if class_id is not None:
-                        class_ids.add(class_id)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        
-        # Create a dictionary mapping class IDs to placeholder class names
-        class_names = {class_id: f"class_{class_id}" for class_id in class_ids}
+        # Create class mapping from config
+        class_names = {
+            int(self.class_mapping.plant): "plant",
+            int(self.class_mapping.non_target): "non_target",
+            int(self.class_mapping.color_checker): "colorchecker"
+        }
         
         return class_names
 

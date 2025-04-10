@@ -12,8 +12,7 @@ dataset:
   # along with classes from latest batches from each growing season
   priority_species: [26]  # adding maize as a priority class
   
-  color_checker_id: 28
-  
+  # color_checker_id: 28
   # Ratios for selecting images from each group
   # should sum to 1.0
   ratios:
@@ -25,13 +24,6 @@ dataset:
   # For other species, let's add a mix of recent and older batches
   other_species_recency_ratio: 0.6
 
-  # # Date-based selection settings
-  # selection:
-  #   # For priority species: percentage from recent batches (the rest will be sampled from older batches)
-  #   priority_recent_ratio: 0.7
-  #   # For other species: percentage from recent batches (the rest will be sampled from older batches)
-  #   other_recent_ratio: 0.6
-  
   # Minimum images per class (if available)
   # Currently only used for priority species (when getting min images)
   min_per_class: 0

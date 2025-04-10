@@ -18,3 +18,7 @@ cvat:
   output_path: ${paths.data_dir}/cvat_dataset
   default_image_width: 9560
   default_image_height: 6368
+  class_mapping:
+    plant: 0
+    non_target: 1
+    color_checker: 2
