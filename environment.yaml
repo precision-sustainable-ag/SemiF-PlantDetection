@@ -10,6 +10,7 @@ dependencies:
   - pandas
   - numpy
   - sqlite
+  - cvat-sdk
   # - opencv-python
   # - matplotlib
   # - seaborn
