@@ -11,7 +11,7 @@ dependencies:
   - numpy
   - sqlite
   - cvat-sdk
-  # - opencv-python
+  - opencv
   # - matplotlib
   # - seaborn
   # - scikit-learn

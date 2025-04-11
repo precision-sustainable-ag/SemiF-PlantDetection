@@ -5,8 +5,8 @@ defaults:
   - _self_
 
 tasks:
-  # - training_dataset
-  # - download_images
+  - training_dataset
+  - download_images
   - cvat_formatter
   - cvat_importer
 images:
