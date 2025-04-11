@@ -50,7 +50,12 @@ class CVATImporter:
 def main(cfg: DictConfig) -> None:
     """
     Main entry point for uploading a CVAT dataset to CVAT server.
-
+    Steps:
+    - Get the appropriate training dataset (by identifying most recent dataset csv file)
+    - Login to CVAT
+    - Create a new project (name: Plant detection {date} ({hour_min}) - date derived from dataset path)
+    - Upload the dataset
+    
     Args:
         cfg (DictConfig): Hydra configuration
     """

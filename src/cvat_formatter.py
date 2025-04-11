@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from omegaconf import DictConfig
 from utils.utils import find_most_recent_dataset_path
+import cv2
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -55,11 +56,15 @@ class CVATFormatter:
         self.default_image_width = cfg.cvat.default_image_width
         self.default_image_height = cfg.cvat.default_image_height
         
+        # Get resize factor from config (default to 1.0 if not specified)
+        self.resize_factor = cfg.cvat.get('resize_factor', 1.0)
+        
         # Store class mapping from config
         self.class_mapping = cfg.cvat.class_mapping
         
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
         log.info(f"Using class mapping from config: {self.class_mapping}")
+        log.info(f"Images will be resized by factor: {self.resize_factor}")
 
     def load_dataset(self) -> pd.DataFrame:
         """
@@ -123,14 +128,24 @@ class CVATFormatter:
         # Destination image path
         dest_image_path = self.images_dir / f"{image_id}.jpg"
         
-        # Copy image to destination
-        shutil.copy2(source_image_path, dest_image_path)
+        # Load and resize image
+        image = cv2.imread(str(source_image_path))
+        if image is None:
+            log.warning(f"Failed to load image: {source_image_path}")
+            return
         
-        # Get image dimensions
-        # Using default values for now
-        # TODO: Get from exif info
-        image_width = self.default_image_width
-        image_height = self.default_image_height
+        # Get original dimensions
+        original_height, original_width = image.shape[:2]
+        
+        # Calculate resize factor (e.g., 0.75 for 75% of original size)
+        new_width = int(original_width * self.resize_factor)
+        new_height = int(original_height * self.resize_factor)
+        
+        # Resize image
+        resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
+        # Save resized image
+        cv2.imwrite(str(dest_image_path), resized_image)
         
         # Parse annotations
         try:
@@ -149,6 +164,15 @@ class CVATFormatter:
                 if not bbox:
                     continue
                 
+                # Scale bounding box coordinates based on resize factor
+                x, y, width, height = bbox
+                scaled_bbox = [
+                    int(x * self.resize_factor),
+                    int(y * self.resize_factor),
+                    int(width * self.resize_factor),
+                    int(height * self.resize_factor)
+                ]
+                
                 # Apply class mapping from config
                 if annotation.get('non_target_weed') is True:
                     mapped_class_id = int(self.class_mapping.non_target)
@@ -157,14 +181,14 @@ class CVATFormatter:
                 else:
                     mapped_class_id = int(self.class_mapping.plant)
                 
-                # Convert bounding box to YOLO format
+                # Convert bounding box to YOLO format using new dimensions
                 center_x, center_y, norm_width, norm_height = self.convert_bbox_to_yolo_format(
-                    bbox, image_width, image_height
+                    scaled_bbox, new_width, new_height
                 )
                 # Write to annotation file with mapped class ID
                 f.write(f"{mapped_class_id} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
         
-        log.debug(f"Processed image {image_id}")
+        log.debug(f"Processed image {image_id} (resized to {new_width}x{new_height})")
 
     def create_train_txt(self) -> None:
         """
@@ -235,8 +259,6 @@ class CVATFormatter:
         
         # Get unique class IDs
         class_names = self.get_unique_class_ids(df)
-        
-        # TODO: downscale images to 75% of original size - resize (don't loose quality - no compression)
         # Process each image
         for _, row in df.iterrows():
             self.process_image(row)
@@ -274,7 +296,14 @@ class CVATFormatter:
 def main(cfg: DictConfig) -> None:
     """
     Main entry point for generating a training dataset.
-    
+    Steps:
+    - Load dataset (by identifying most recent dataset csv file)
+    - Get unique class IDs
+    - Resize images, change bbox coordinates accordingly
+    - Convert bbox coordinates to YOLO format
+    - Create cvat dataset (in specified folder structure)
+    - Create zip archive of cvat dataset
+
     Args:
         cfg (DictConfig): Hydra configuration
     """
