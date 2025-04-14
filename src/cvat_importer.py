@@ -34,7 +34,8 @@ class CVATImporter:
         experiment_date_path = find_most_recent_dataset_path(self.cfg.database.dataset.output_path)
         
         # Extract date and time components from dataset path
-        path_parts = str(experiment_date_path).split('/')
+        # path_parts = str(experiment_date_path).split('/')
+        path_parts = experiment_date_path.parts
         date_str = path_parts[-2] if len(path_parts) >= 2 else "unknown-date"
         time_parts = path_parts[-1].split('-') if len(path_parts) >= 1 else ["00", "00", "00"]
         hour_min = f"{time_parts[0]}-{time_parts[1]}" if len(time_parts) >= 2 else "00-00"

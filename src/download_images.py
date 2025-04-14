@@ -10,7 +10,7 @@ from typing import List, Dict, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from omegaconf import DictConfig
-
+from utils.utils import find_most_recent_dataset_path
 # Setup logging
 log = logging.getLogger(__name__)
 
@@ -26,37 +26,9 @@ class ImageDownloader:
         Args:
             cfg (DictConfig): Hydra configuration
         """
-        # TODO: util function for reusability
         # Find the most recent dataset directory
         base_dataset_path = Path(cfg.database.dataset.output_path)
-        if base_dataset_path.exists():
-            date_dirs = [d for d in base_dataset_path.iterdir() if d.is_dir()]
-            date_dirs.sort(reverse=True)
-            if date_dirs:
-                # Now find the timestamp (hr-mm-ss) folders inside the most recent date directory
-                hr_min_sec_dirs = [d for d in date_dirs[0].iterdir() if d.is_dir()]
-                hr_min_sec_dirs.sort(reverse=True)
-                if hr_min_sec_dirs:
-                    self.dataset_path = hr_min_sec_dirs[0]
-                    log.info(f"Using most recent timestamp directory: {self.dataset_path}")
-                else:
-                    self.dataset_path = date_dirs[0]
-                    log.warning(f"No timestamp (hr-mm-ss) directories found, using recent date path: {self.dataset_path}")
-            else:
-                self.dataset_path = base_dataset_path
-                log.warning(f"No timestamp directories found, using base path: {self.dataset_path}")
-        else:
-            self.dataset_path = base_dataset_path
-            log.warning(f"Dataset path does not exist: {self.dataset_path}")
-            
-            if date_dirs:
-                self.dataset_path = date_dirs[0]
-                log.info(f"Using most recent dataset directory: {self.dataset_path}")
-            else:
-                self.dataset_path = base_dataset_path
-                log.warning(f"No timestamp directories found, using base path: {self.dataset_path}")
-        
-
+        self.dataset_path = find_most_recent_dataset_path(base_dataset_path)
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
         self.storage_bases = []
