@@ -175,7 +175,10 @@ class CVATFormatter:
                 
                 # Apply class mapping from config
                 if annotation.get('non_target_weed') is True:
-                    mapped_class_id = int(self.class_mapping.non_target)
+                    if annotation.get('non_target_weed_pred_conf') > 0.99:
+                        mapped_class_id = int(self.class_mapping.non_target)
+                    else:
+                        mapped_class_id = int(self.class_mapping.plant)
                 elif annotation.get('category_class_id') == 28:
                     mapped_class_id = int(self.class_mapping.color_checker)
                 else:
