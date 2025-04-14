@@ -7,8 +7,22 @@ defaults:
 tasks:
   - training_dataset
   - download_images
-
+  - cvat_formatter
+  - cvat_importer
 images:
   output_path: ${paths.data_dir}/training_images
   parallel: true
   parallel_workers: 8 
+
+cvat:
+  output_path: ${paths.data_dir}/cvat_dataset
+  default_image_width: 9560
+  default_image_height: 6368
+  resize_factor: 0.75
+  class_mapping:
+    plant: 0
+    non_target: 1
+    color_checker: 2
+  dataset_format: "Ultralytics YOLO Detection 1.0"
+
+secrets_path: ${paths.secrets_dir}/default.yaml

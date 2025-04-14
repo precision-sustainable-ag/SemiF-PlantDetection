@@ -8,10 +8,6 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.append("src")
 
-# Import task modules for registration
-import training_dataset
-import download_images
-
 log = logging.getLogger(__name__)
 
 

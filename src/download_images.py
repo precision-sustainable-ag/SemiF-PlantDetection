@@ -10,7 +10,7 @@ from typing import List, Dict, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from omegaconf import DictConfig
-
+from utils.utils import find_most_recent_dataset_path
 # Setup logging
 log = logging.getLogger(__name__)
 
@@ -28,21 +28,7 @@ class ImageDownloader:
         """
         # Find the most recent dataset directory
         base_dataset_path = Path(cfg.database.dataset.output_path)
-        if base_dataset_path.exists():
-            timestamp_dirs = [d for d in base_dataset_path.iterdir() if d.is_dir()]
-            timestamp_dirs.sort(reverse=True)
-            
-            if timestamp_dirs:
-                self.dataset_path = timestamp_dirs[0]
-                log.info(f"Using most recent dataset directory: {self.dataset_path}")
-            else:
-                self.dataset_path = base_dataset_path
-                log.warning(f"No timestamp directories found, using base path: {self.dataset_path}")
-        else:
-            self.dataset_path = base_dataset_path
-            log.warning(f"Dataset path does not exist: {self.dataset_path}")
-        
-
+        self.dataset_path = find_most_recent_dataset_path(base_dataset_path)
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
         self.storage_bases = []
