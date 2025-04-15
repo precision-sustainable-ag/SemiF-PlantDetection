@@ -47,3 +47,40 @@ def find_most_recent_dataset_path(base_dataset_path):
         log.warning(f"Dataset path does not exist: {dataset_path}")
     
     return dataset_path
+
+def get_human_annotations(lts_locations):
+    """
+    Get all human annotations (CVAT) from a base path.
+    Read all directories in base_path for exported cvat annotations
+    - failsafe - also include a local directory (and copy it to lts) - in case user doesn't upload there
+    Validate format
+    return list of image ids and/or the annotations themselves (since validating)
+    Args:
+        lts_locations List[str or Path]: List of base directory paths where human annotations are located
+        
+    Returns:
+        List[str]: image ids for images already annotated
+    """
+    image_ids = []
+    
+    # TODO: check data.yaml in each subdirectory to verify 3 classes
+    # Check if base path exists
+    for lts_location in lts_locations:
+        base_path = Path(lts_location)
+        if not base_path.exists():
+            log.warning(f"Base path does not exist: {base_path}")
+            continue
+        # Go through all directories in the base path
+        for directory in [d for d in base_path.iterdir() if d.is_dir()]:
+            # Look for 'labels' subfolder
+            labels_dir = directory / "labels"
+            if labels_dir.exists() and labels_dir.is_dir():
+                # Use recursive glob to get all txt files in labels directory and its subfolders
+                txt_files = labels_dir.glob("**/*.txt")
+                # Extract filenames without extension and add to image_ids
+                for txt_file in txt_files:
+                    image_id = txt_file.stem  # Get filename without extension
+                    image_ids.append(image_id)
+    
+    log.info(f"Found {len(image_ids)} annotated image IDs")
+    return image_ids

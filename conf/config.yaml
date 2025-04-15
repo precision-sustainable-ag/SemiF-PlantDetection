@@ -5,10 +5,11 @@ defaults:
   - _self_
 
 tasks:
-  - training_dataset
-  - download_images
-  - cvat_formatter
-  - cvat_importer
+  # - training_dataset
+  # - download_images
+  # - cvat_formatter
+  # - cvat_importer
+  - prepare_dataset
 images:
   output_path: ${paths.data_dir}/training_images
   parallel: true
