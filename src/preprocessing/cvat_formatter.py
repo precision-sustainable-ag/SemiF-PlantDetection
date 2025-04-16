@@ -1,11 +1,9 @@
 import os
 import json
 import logging
-import shutil
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 from omegaconf import DictConfig
 import cv2
 

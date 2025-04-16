@@ -1,6 +1,5 @@
 from omegaconf import DictConfig
 import logging
-from hydra.utils import get_method
 from src.preprocessing.training_dataset import main as training_dataset_main
 from src.preprocessing.download_images import main as download_images_main
 from src.preprocessing.cvat_formatter import main as cvat_formatter_main
