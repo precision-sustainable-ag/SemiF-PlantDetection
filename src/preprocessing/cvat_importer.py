@@ -1,8 +1,8 @@
 import logging
 from omegaconf import DictConfig
-from utils.utils import read_secrets, find_most_recent_dataset_path
 from pathlib import Path
 from cvat_sdk import Client, models
+from src.utils.utils import read_secrets, find_most_recent_dataset_path
 
 log = logging.getLogger(__name__)
 

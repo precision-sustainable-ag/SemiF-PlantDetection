@@ -7,8 +7,9 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any
 from omegaconf import DictConfig
-from utils.utils import find_most_recent_dataset_path
 import cv2
+
+from src.utils.utils import find_most_recent_dataset_path
 
 # Setup logging
 log = logging.getLogger(__name__)

@@ -3,13 +3,16 @@ defaults:
   - database: training_dataset
   - paths: default
   - _self_
+  - preprocess: default
 
-tasks:
+mode: preprocess
+
+# tasks:
   # - training_dataset
   # - download_images
   # - cvat_formatter
   # - cvat_importer
-  - prepare_dataset
+  # - prepare_dataset
 images:
   output_path: ${paths.data_dir}/training_images
   parallel: true
