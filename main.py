@@ -4,14 +4,15 @@ import sys
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from src.preprocess import main as preprocess
-
+from src.train import main as train
 
 sys.path.append("src")
 
 log = logging.getLogger(__name__)
 
 MODE_REGISTRY = {
-    "preprocess": preprocess
+    "preprocess": preprocess,
+    "train": train
 }
 
 @hydra.main(version_base="1.2", config_path="conf", config_name="config")
@@ -27,8 +28,8 @@ def run(cfg: DictConfig) -> None:
     try:
         MODE_REGISTRY[cfg.mode](cfg)
     except Exception as e:
-        log.exception(f"Failed to execute pipelinemode {cfg.mode}: {e}")
-        return
+        log.error(f"Failed to execute pipeline mode {cfg.mode}: {e}")
+        raise ValueError(f"Failed to execute pipeline mode {cfg.mode}")
 
 
 if __name__ == "__main__":

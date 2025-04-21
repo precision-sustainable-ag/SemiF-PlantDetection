@@ -60,7 +60,7 @@ def main(cfg: DictConfig) -> None:
     Args:
         cfg (DictConfig): Hydra configuration
     """
-
+    # TODO: delete the cvat_dataset folder and zip file after upload
     log.info("Starting CVAT dataset uploader")
     cvat_importer = CVATImporter(cfg)
     log.info(f"logging into cvat")

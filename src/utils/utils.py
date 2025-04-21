@@ -48,9 +48,9 @@ def find_most_recent_dataset_path(base_dataset_path):
     
     return dataset_path
 
-def get_human_annotations(lts_locations):
+def get_annotated_image_ids(lts_locations):
     """
-    Get all human annotations (CVAT) from a base path.
+    Get all annotated image ids from a base path.
     Read all directories in base_path for exported cvat annotations
     - failsafe - also include a local directory (and copy it to lts) - in case user doesn't upload there
     Validate format
@@ -61,8 +61,7 @@ def get_human_annotations(lts_locations):
     Returns:
         List[str]: image ids for images already annotated
     """
-    image_ids = []
-    
+    image_ids = {}
     # TODO: check data.yaml in each subdirectory to verify 3 classes
     # Check if base path exists
     for lts_location in lts_locations:
@@ -80,7 +79,13 @@ def get_human_annotations(lts_locations):
                 # Extract filenames without extension and add to image_ids
                 for txt_file in txt_files:
                     image_id = txt_file.stem  # Get filename without extension
-                    image_ids.append(image_id)
+                    if image_id in image_ids.keys():
+                        log.error(f"Found multiple annotations for {image_id}")
+                        raise ValueError(f"Found multiple annotations for {image_id}")
+                    
+                    image_ids[image_id] = txt_file
+                    # image_ids.append(image_id)
+                    # full_paths.append(txt_file)
     
     log.info(f"Found {len(image_ids)} annotated image IDs")
     return image_ids

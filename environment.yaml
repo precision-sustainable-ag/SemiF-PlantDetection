@@ -12,6 +12,7 @@ dependencies:
   - sqlite
   - cvat-sdk
   - opencv
+  - scikit-learn
   # - matplotlib
   # - seaborn
   # - scikit-learn

@@ -1,0 +1,6 @@
+tasks:
+  - prepare_dataset
+
+
+random_seed: 42
+validation_split: 0.2

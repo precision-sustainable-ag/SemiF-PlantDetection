@@ -23,9 +23,7 @@ def main(cfg: DictConfig):
     - cvat_formatter
     - cvat_importer
     """
-    log.info(f"Starting preprocess mode")
     log.info(f"Tasks: {cfg.preprocess.tasks}")
-    log.info(f"cfg: {cfg}")
     
     for task in cfg.preprocess.tasks:
         if task in TASK_REGISTRY:

@@ -3,11 +3,12 @@ defaults:
   - paths: default
   - _self_
   - preprocess: default
-
+  - train: default
 # each mode is a pipeline mode
 # preprocess/train
 # list of tasks available in mode specific config
-mode: preprocess
+mode: train
+
 
 # used mainly in download_images
 images:
