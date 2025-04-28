@@ -1,10 +1,12 @@
 from omegaconf import DictConfig
 import logging
 from src.training.prepare_dataset import main as prepare_dataset_main
+from src.training.train_model import main as train_model_main
 
 log = logging.getLogger(__name__)
 TASK_REGISTRY = {
-    "prepare_dataset": prepare_dataset_main
+    "prepare_dataset": prepare_dataset_main,
+    "train_model": train_model_main
 }
 
 def main(cfg: DictConfig):
@@ -19,11 +21,6 @@ def main(cfg: DictConfig):
         else:
             log.error(f"Task {task} not found in TASK_REGISTRY")
             raise ValueError(f"Task {task} not found in TASK_REGISTRY")
-        try:
-            TASK_REGISTRY[task](cfg)
-        except Exception as e:
-            log.error(f"Failed to execute task {task}: {e}")
-            raise ValueError(f"Failed to execute task {task}: {e}")
 
 if __name__ == "__main__":
     main()

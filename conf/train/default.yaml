@@ -1,6 +1,15 @@
 tasks:
-  - prepare_dataset
+  # - prepare_dataset
+  - train_model
 
+model_name: yolo11n.pt
+epochs: 5
+image_size: 640
+batch_size: 1
+# num_workers: 10
+# patience:
+# lr:
+# weight_decay:
 
 random_seed: 42
 validation_split: 0.2

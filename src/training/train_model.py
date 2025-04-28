@@ -1,0 +1,114 @@
+from omegaconf import DictConfig
+import logging
+import os
+from pathlib import Path
+import yaml
+from datetime import datetime
+# import torch
+from ultralytics import YOLO
+
+log = logging.getLogger(__name__)
+
+class TrainModel:
+    def __init__(self, cfg: DictConfig, data_path=None):
+        """
+        Initialize training for YOLOv11 model
+        
+        Args:
+            cfg (DictConfig): Configuration
+            data_path (Path, optional): Path to the dataset. If None, will use the path from the last run
+        """
+        self.cfg = cfg
+        
+        # Set up paths
+        if data_path is None:
+            # Find the most recent dataset
+            base_dir = Path(self.cfg.paths.data_dir) / 'train_data'
+            # Get most recent date directory
+            date_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir()])
+            if not date_dirs:
+                raise ValueError("No training data found")
+            latest_date_dir = date_dirs[-1]
+            
+            # Get most recent time directory
+            time_dirs = sorted([d for d in latest_date_dir.iterdir() if d.is_dir()])
+            if not time_dirs:
+                raise ValueError(f"No training data found in {latest_date_dir}")
+            data_path = time_dirs[-1]
+        
+        self.data_path = Path(data_path)
+        log.info(f"Using dataset at {self.data_path}")
+        
+        # Output directory for trained models
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_dir = Path(self.cfg.paths.model_dir) / timestamp
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Create data.yaml
+        self.create_data_yaml()
+        
+    def create_data_yaml(self):
+        """Create data.yaml file required by YOLO"""
+        data = {
+            'path': str(self.data_path),
+            'train': 'train/images',
+            'val': 'val/images',
+            'nc': 3,  # Number of classes
+            'names': {
+                0: 'plant',
+                1: 'non_target',
+                2: 'colorchecker'
+            }
+        }
+        
+        yaml_path = self.data_path / 'data.yaml'
+        with open(yaml_path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False)
+        
+        log.info(f"Created data.yaml at {yaml_path}")
+        self.yaml_path = yaml_path
+        
+    def train(self):
+        """Train the YOLOv11 model"""
+        log.info("Starting YOLOv11 training")
+        
+        # Load a pretrained YOLO model
+        model = YOLO(self.cfg.train.model_name)
+        
+        # Train the model
+        results = model.train(
+            data=str(self.yaml_path),
+            epochs=self.cfg.train.epochs,
+            imgsz=self.cfg.train.image_size,
+            batch=self.cfg.train.batch_size,
+            # workers=self.cfg.train.num_workers,
+            # device=0 if torch.cuda.is_available() else 'cpu',
+            device='cpu',
+            project=str(self.output_dir),
+            name='run1',
+            save=True,
+            # patience=self.cfg.train.patience,
+            # lr0=self.cfg.train.lr,
+            # weight_decay=self.cfg.train.weight_decay
+        )
+        
+        # Save the model
+        model.export()
+        log.info(f"Model trained and saved to {self.output_dir}/run1")
+        
+        return results
+        
+def main(cfg: DictConfig, data_path=None):
+    """
+    Main entrypoint for model training
+    
+    Args:
+        cfg (DictConfig): Configuration
+        data_path (Path, optional): Path to the dataset
+    """
+    trainer = TrainModel(cfg, data_path)
+    results = trainer.train()
+    return results
+
+if __name__ == "__main__":
+    main() 

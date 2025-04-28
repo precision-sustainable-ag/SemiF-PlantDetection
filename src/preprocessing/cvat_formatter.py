@@ -7,7 +7,7 @@ from typing import List, Dict
 from omegaconf import DictConfig
 import cv2
 
-from src.utils.utils import find_most_recent_dataset_path
+from src.utils.utils import find_most_recent_dataset_path, convert_bbox_to_yolo_format
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -82,30 +82,6 @@ class CVATFormatter:
         except Exception as e:
             log.error(f"Error loading CSV file: {self.csv_file_path} - {e}")
             raise
-
-    def convert_bbox_to_yolo_format(self, bbox: List[int], image_width: int, image_height: int) -> List[float]:
-        """
-        Convert bounding box from [x, y, width, height] (top-left) to YOLO format [class_id, center_x, center_y, width, height] (normalized).
-        
-        Args:
-            bbox (List[int]): Bounding box in [x, y, width, height] format
-            image_width (int): Width of the image
-            image_height (int): Height of the image
-            
-        Returns:
-            List[float]: Bounding box in YOLO format [center_x, center_y, width, height] (normalized)
-        """
-        x, y, width, height = bbox
-        
-        # Convert to center coordinates
-        center_x = (x + width / 2) / image_width
-        center_y = (y + height / 2) / image_height
-        
-        # Normalize width and height
-        normalized_width = width / image_width
-        normalized_height = height / image_height
-        
-        return [center_x, center_y, normalized_width, normalized_height]
 
     def process_image(self, row: pd.Series) -> None:
         """
@@ -183,10 +159,10 @@ class CVATFormatter:
                 else:
                     mapped_class_id = int(self.class_mapping.plant)
                 
-                # Convert bounding box to YOLO format using new dimensions
-                center_x, center_y, norm_width, norm_height = self.convert_bbox_to_yolo_format(
+                center_x, center_y, norm_width, norm_height = convert_bbox_to_yolo_format(
                     scaled_bbox, new_width, new_height
                 )
+                
                 # Write to annotation file with mapped class ID
                 f.write(f"{mapped_class_id} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
         

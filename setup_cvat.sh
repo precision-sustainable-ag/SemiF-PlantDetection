@@ -12,6 +12,8 @@ export CVAT_HOST=sunny.ece.ncsu.edu
 # needs platform specification if not running on x86_64
 # DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose up -d
 docker compose up -d
+# to stop manually (need to do this in cvat installation folder)
+# docker compose down 
 
 # create super user
 # will need to enter details manually

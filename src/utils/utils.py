@@ -89,3 +89,28 @@ def get_annotated_image_ids(lts_locations):
     
     log.info(f"Found {len(image_ids)} annotated image IDs")
     return image_ids
+
+def convert_bbox_to_yolo_format(bbox, image_width, image_height):
+    """
+    Convert bounding box from [x, y, width, height] (top-left) to YOLO format 
+    [center_x, center_y, width, height] (normalized).
+    
+    Args:
+        bbox (List[int]): Bounding box in [x, y, width, height] format
+        image_width (int): Width of the image
+        image_height (int): Height of the image
+        
+    Returns:
+        List[float]: Bounding box in YOLO format [center_x, center_y, width, height] (normalized)
+    """
+    x, y, width, height = bbox
+    
+    # Convert to center coordinates
+    center_x = (x + width / 2) / image_width
+    center_y = (y + height / 2) / image_height
+    
+    # Normalize width and height
+    normalized_width = width / image_width
+    normalized_height = height / image_height
+    
+    return [center_x, center_y, normalized_width, normalized_height]

@@ -6,5 +6,6 @@
 **outputs
 **__pycache__
 *.db
+**.pt
 
 secrets/*.yaml
