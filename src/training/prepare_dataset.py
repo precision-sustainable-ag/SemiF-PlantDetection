@@ -17,14 +17,17 @@ class PrepareDataset:
         # TODO: save dataset to a different location - causing issues with getting latest csv
         self.cfg = cfg
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
-        self.data_csv = find_most_recent_dataset_path(Path(self.cfg.paths.data_dir) / 'training_dataset') / 'training_images.csv'
+        self.dataset_path = find_most_recent_dataset_path(self.cfg.database.dataset.output_path)
+        self.data_csv = self.dataset_path / 'training_images.csv'
+        self.class_mapping = self.cfg.cvat.class_mapping
 
         self.random_seed = self.cfg.train.random_seed
         self.validation_split = self.cfg.train.validation_split
 
         timestamp_date = datetime.now().strftime("%Y-%m-%d")
         timestamp_time = datetime.now().strftime("%H-%M-%S")
-        self.train_data_path = Path(self.cfg.paths.data_dir) / 'train_data' / timestamp_date / timestamp_time
+        self.train_data_path = Path(self.cfg.train.model_data) / timestamp_date / timestamp_time
+        # self.train_data_path = Path(self.cfg.paths.data_dir) / 'train_data' / timestamp_date / timestamp_time
         os.makedirs(self.train_data_path, exist_ok=True)
     
     def identify_training_data(self):
@@ -54,8 +57,8 @@ class PrepareDataset:
         df.loc[df['image_id'].isin(train_ids), 'split'] = 'train'
         df.loc[df['image_id'].isin(val_ids), 'split'] = 'val'
         
-        # Save updated dataframe
-        output_path = self.train_data_path / 'training_images_split.csv'
+        # Save updated dataframe (also include timestamp to indicate data subset used)
+        output_path = self.train_data_path / f'train_images_{str(self.dataset_path.parent.name)}_{str(self.dataset_path.name)}.csv'
         df.to_csv(output_path, index=False)
         log.info(f"Split dataset into {len(train_ids)} training and {len(val_ids)} validation images")
         return df
@@ -71,7 +74,8 @@ class PrepareDataset:
             image_id = row['image_id']
             
             # Find source image - assuming .jpg extension
-            source_image_path = Path(self.cfg.paths.data_dir) / 'training_images' / f"{image_id}.jpg"
+            # source_image_path = Path(self.cfg.paths.data_dir) / 'training_images' / f"{image_id}.jpg"
+            source_image_path = Path(self.cfg.images.output_path) / f"{image_id}.jpg"
             
             # Destination paths for the image and label in Ultralytics format
             dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
@@ -83,6 +87,7 @@ class PrepareDataset:
                 
             else:
                 log.warning(f"Source image not found: {source_image_path}")
+                # TODO: try to get it from LTS if not exists
                 continue
             
             if image_id in self.human_annotations.keys():
@@ -108,13 +113,13 @@ class PrepareDataset:
                                 # Apply class mapping from config
                                 if annotation.get('non_target_weed') is True:
                                     if annotation.get('non_target_weed_pred_conf', 0) > 0.99:
-                                        mapped_class_id = int(self.cfg.class_mapping.non_target)
+                                        mapped_class_id = int(self.class_mapping.non_target)
                                     else:
-                                        mapped_class_id = int(self.cfg.class_mapping.plant)
+                                        mapped_class_id = int(self.class_mapping.plant)
                                 elif annotation.get('category_class_id') == 28:
-                                    mapped_class_id = int(self.cfg.class_mapping.color_checker)
+                                    mapped_class_id = int(self.class_mapping.color_checker)
                                 else:
-                                    mapped_class_id = int(self.cfg.class_mapping.plant)
+                                    mapped_class_id = int(self.class_mapping.plant)
                                 
                                 # Convert bounding box to YOLO format
                                 center_x, center_y, norm_width, norm_height = convert_bbox_to_yolo_format(

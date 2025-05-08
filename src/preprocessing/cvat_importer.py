@@ -11,14 +11,7 @@ class CVATImporter:
         self.cfg = cfg
         self.cvat_secrets = read_secrets(cfg.secrets_path)['cvat']
         self.cvat_dataset_format = cfg.cvat.dataset_format
-    
-    def get_cvat_dataset(self) -> Path:
-        """
-        Returns path of the CVAT dataset to be uploaded
-        """
-        # TODO: Might include going through different dates
-        dataset_path = Path(self.cfg.paths.data_dir, "cvat_dataset.zip")
-        return str(dataset_path)
+        self.zip_path = Path(self.cfg.paths.data_dir, "cvat_dataset.zip")
     
     def login(self):
         """
@@ -43,10 +36,21 @@ class CVATImporter:
         project_name = f"Plant detection {date_str} ({hour_min})"
         project_spec = models.ProjectWriteRequest(name=project_name)
         self.cvat_client.projects.create_from_dataset(spec=project_spec,
-                                                      dataset_path=self.get_cvat_dataset(),
+                                                      dataset_path=str(self.zip_path),
                                                       dataset_format=self.cvat_dataset_format)
         
         return project_name
+
+    def __del__(self):
+        """
+        Destructor that deletes the zip file after it has been uploaded.
+        """
+        try:
+            if self.zip_path.exists():
+                self.zip_path.unlink()
+                log.info(f"Deleted CVAT dataset zip file: {self.zip_path}")
+        except Exception as e:
+            log.error(f"Error deleting CVAT dataset zip file: {e}")
 
 def main(cfg: DictConfig) -> None:
     """

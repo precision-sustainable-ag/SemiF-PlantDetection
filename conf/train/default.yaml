@@ -1,5 +1,5 @@
 tasks:
-  # - prepare_dataset
+  - prepare_dataset
   - train_model
 
 model_name: yolo11n.pt
@@ -13,3 +13,8 @@ batch_size: 1
 
 random_seed: 42
 validation_split: 0.2
+
+models_path: ${paths.data_dir}/models
+
+# path to data saved in ultralytics format and also has the train/val split information
+model_data: ${paths.data_dir}/model_data

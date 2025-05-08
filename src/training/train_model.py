@@ -6,6 +6,7 @@ import yaml
 from datetime import datetime
 # import torch
 from ultralytics import YOLO
+from ..utils.utils import find_most_recent_dataset_path
 
 log = logging.getLogger(__name__)
 
@@ -21,27 +22,28 @@ class TrainModel:
         self.cfg = cfg
         
         # Set up paths
-        if data_path is None:
-            # Find the most recent dataset
-            base_dir = Path(self.cfg.paths.data_dir) / 'train_data'
-            # Get most recent date directory
-            date_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir()])
-            if not date_dirs:
-                raise ValueError("No training data found")
-            latest_date_dir = date_dirs[-1]
-            
-            # Get most recent time directory
-            time_dirs = sorted([d for d in latest_date_dir.iterdir() if d.is_dir()])
-            if not time_dirs:
-                raise ValueError(f"No training data found in {latest_date_dir}")
-            data_path = time_dirs[-1]
-        
-        self.data_path = Path(data_path)
+        self.data_path = find_most_recent_dataset_path(Path(self.cfg.train.model_data))
         log.info(f"Using dataset at {self.data_path}")
+        # if data_path is None:
+        #     # Find the most recent dataset
+        #     base_dir = Path(self.cfg.paths.data_dir) / 'train_data'
+        #     # Get most recent date directory
+        #     date_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir()])
+        #     if not date_dirs:
+        #         raise ValueError("No training data found")
+        #     latest_date_dir = date_dirs[-1]
+            
+        #     # Get most recent time directory
+        #     time_dirs = sorted([d for d in latest_date_dir.iterdir() if d.is_dir()])
+        #     if not time_dirs:
+        #         raise ValueError(f"No training data found in {latest_date_dir}")
+        #     data_path = time_dirs[-1]
+        # self.data_path = Path(data_path)
+        
         
         # Output directory for trained models
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.output_dir = Path(self.cfg.paths.model_dir) / timestamp
+        # timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_dir = Path(self.cfg.train.models_path) / self.data_path.parent.name / self.data_path.name
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create data.yaml

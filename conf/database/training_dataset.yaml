@@ -6,7 +6,7 @@ db_path: ${paths.db_path} # This will be inherited from paths config
 # Training dataset settings
 dataset:
   # Number of images to include in the training dataset
-  size: 10
+  size: 20
   
   # Class IDs to prioritize - these will be selected first
   # along with classes from latest batches from each growing season
@@ -30,7 +30,7 @@ dataset:
   
   # Output path for dataset
   # TODO: add a timestamp to the output path (like outputs)
-  output_path: ${paths.data_dir}/training_dataset
+  output_path: ${paths.data_dir}/data_csvs
   
   # Random seed for reproducibility
   random_seed: 42 

@@ -2,10 +2,12 @@ import os
 import json
 import logging
 import pandas as pd
+import zipfile
 from pathlib import Path
 from typing import List, Dict
 from omegaconf import DictConfig
 import cv2
+import shutil
 
 from src.utils.utils import find_most_recent_dataset_path, convert_bbox_to_yolo_format
 
@@ -64,6 +66,17 @@ class CVATFormatter:
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
         log.info(f"Using class mapping from config: {self.class_mapping}")
         log.info(f"Images will be resized by factor: {self.resize_factor}")
+
+    def __del__(self):
+        """
+        Destructor that deletes the CVAT dataset folder when the object is deleted.
+        """
+        try:
+            if self.cvat_output_folder.exists():
+                shutil.rmtree(self.cvat_output_folder)
+                log.info(f"Deleted CVAT dataset folder: {self.cvat_output_folder}")
+        except Exception as e:
+            log.error(f"Error deleting CVAT dataset folder: {e}")
 
     def load_dataset(self) -> pd.DataFrame:
         """
@@ -256,8 +269,6 @@ class CVATFormatter:
         """
         Create a zip archive of the CVAT dataset.
         """
-        import zipfile
-        
         # Output zip file path
         zip_path = self.cvat_output_folder.parent / f"{self.cvat_output_folder.name}.zip"
         
@@ -269,7 +280,9 @@ class CVATFormatter:
                     arcname = os.path.relpath(file_path, self.cvat_output_folder.parent)
                     zipf.write(file_path, arcname)
         
-        log.info(f"Created zip archive: {zip_path}") 
+        log.info(f"Created zip archive: {zip_path}")
+    
+    
 
 def main(cfg: DictConfig) -> None:
     """

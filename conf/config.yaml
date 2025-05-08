@@ -7,12 +7,12 @@ defaults:
 # each mode is a pipeline mode
 # preprocess/train
 # list of tasks available in mode specific config
-mode: train
+mode: preprocess
 
 
 # used mainly in download_images
 images:
-  output_path: ${paths.data_dir}/training_images
+  output_path: ${paths.data_dir}/images
   parallel: true
   parallel_workers: 8 
 
