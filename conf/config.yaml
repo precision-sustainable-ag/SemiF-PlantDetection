@@ -14,7 +14,7 @@ mode: preprocess
 images:
   output_path: ${paths.data_dir}/images
   parallel: true
-  parallel_workers: 8 
+  parallel_workers: 16
 
 # used mainly in cvat_formatter and cvat_importer
 cvat:
@@ -22,6 +22,8 @@ cvat:
   default_image_width: 9560
   default_image_height: 6368
   resize_factor: 0.75
+  parallel: true
+  parallel_workers: 16
   class_mapping:
     plant: 0
     non_target: 1

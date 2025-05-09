@@ -6,7 +6,7 @@ db_path: ${paths.db_path} # This will be inherited from paths config
 # Training dataset settings
 dataset:
   # Number of images to include in the training dataset
-  size: 20
+  size: 10
   
   # Class IDs to prioritize - these will be selected first
   # along with classes from latest batches from each growing season

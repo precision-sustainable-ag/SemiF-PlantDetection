@@ -8,6 +8,7 @@ from typing import List, Dict
 from omegaconf import DictConfig
 import cv2
 import shutil
+from multiprocessing import Pool, cpu_count
 
 from src.utils.utils import find_most_recent_dataset_path, convert_bbox_to_yolo_format
 
@@ -52,7 +53,6 @@ class CVATFormatter:
         
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.labels_dir.mkdir(parents=True, exist_ok=True)
-        
         # Set default image dimensions if not available in image files
         self.default_image_width = cfg.cvat.default_image_width
         self.default_image_height = cfg.cvat.default_image_height
@@ -62,12 +62,18 @@ class CVATFormatter:
         
         # Store class mapping from config
         self.class_mapping = cfg.cvat.class_mapping
+
+        # Parallel processing configuration
+        self.parallel = cfg.cvat.get('parallel', False)
+        self.parallel_workers = min(cfg.cvat.get('parallel_workers', cpu_count()), cpu_count())
         
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
         log.info(f"Using class mapping from config: {self.class_mapping}")
         log.info(f"Images will be resized by factor: {self.resize_factor}")
+        if self.parallel:
+            log.info(f"Parallel processing: {self.parallel} with {self.parallel_workers} workers")
 
-    def __del__(self):
+    def cleanup(self):
         """
         Destructor that deletes the CVAT dataset folder when the object is deleted.
         """
@@ -181,6 +187,11 @@ class CVATFormatter:
         
         log.debug(f"Processed image {image_id} (resized to {new_width}x{new_height})")
 
+    def process_img_wrapper(self, row):
+        try:
+            self.process_image(row)
+        except Exception as e:
+            log.error(f"Error processing image {row['image_id']}")
     def create_train_txt(self) -> None:
         """
         Create the train.txt file containing paths to all images.
@@ -250,9 +261,16 @@ class CVATFormatter:
         
         # Get unique class IDs
         class_names = self.get_unique_class_ids(df)
-        # Process each image
-        for _, row in df.iterrows():
-            self.process_image(row)
+
+        # Process images in parallel or sequentially
+        if self.parallel:
+            log.info(f"Processing images in parallel with {self.parallel_workers} workers")
+            with Pool(processes=self.parallel_workers) as pool:
+                pool.map(self.process_image, [row for _, row in df.iterrows()])
+        else:
+            log.info("Processing images sequentially")
+            for _, row in df.iterrows():
+                self.process_image(row)
         
         # Create train.txt
         self.create_train_txt()
@@ -302,7 +320,9 @@ def main(cfg: DictConfig) -> None:
     log.info("Starting CVAT formatter task")
     
     formatter = CVATFormatter(cfg)
+    formatter.cleanup()
     formatter.format_for_cvat()
+    formatter.cleanup()
     
     log.info("CVAT formatter task completed")
 
