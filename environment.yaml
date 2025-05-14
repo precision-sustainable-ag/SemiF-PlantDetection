@@ -14,7 +14,8 @@ dependencies:
   - opencv
   - scikit-learn
   - ultralytics
-  pip:
+  - pip
+  - pip:
     - torch
     - torchvision
   # - matplotlib

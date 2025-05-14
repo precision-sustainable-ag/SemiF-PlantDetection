@@ -13,8 +13,15 @@ batch_size: 1
 
 random_seed: 42
 validation_split: 0.2
+parallel: true
+parallel_workers: 16
 
 models_path: ${paths.data_dir}/models
 
 # path to data saved in ultralytics format and also has the train/val split information
 model_data: ${paths.data_dir}/model_data
+
+# Model hyperparameters
+# patience: 50
+# lr: 0.001
+# weight_decay: 0.0005
