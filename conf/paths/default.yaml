@@ -10,7 +10,7 @@ log_dir: ${paths.root_dir}/logs/
 
 # path to database
 # db_path: /Users/jbshah/_p/test/agir.db
-db_path: ${paths.root_dir}/agir.db
+db_path: ${paths.root_dir}/data/db/agir.db
 
 # path to secrets directory
 secrets_dir: ${paths.root_dir}/secrets/

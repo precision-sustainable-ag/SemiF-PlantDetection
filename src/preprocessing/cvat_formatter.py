@@ -320,7 +320,6 @@ def main(cfg: DictConfig) -> None:
     log.info("Starting CVAT formatter task")
     
     formatter = CVATFormatter(cfg)
-    formatter.cleanup()
     formatter.format_for_cvat()
     formatter.cleanup()
     

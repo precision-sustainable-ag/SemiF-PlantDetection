@@ -4,6 +4,7 @@ import logging
 import json
 import random
 import os
+from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Set
 import math
@@ -50,6 +51,11 @@ class TrainingDatasetGenerator:
         random.seed(self.random_seed)
         
         # Connect to the database
+        if not Path(self.db_path).exists():
+            log.error(f"Database file not found: {self.db_path}")
+            log.info(f"Make sure you have run the copy_db.sh script to download the database: 'bash scripts/copy_db.sh'")
+            raise FileNotFoundError(f"Database file not found: {self.db_path}")
+        
         self.conn = sqlite3.connect(self.db_path)
         log.info(f"Connected to database: {self.db_path}")
         
