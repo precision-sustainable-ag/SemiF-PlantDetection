@@ -27,7 +27,7 @@ class PrepareDataset:
 
         timestamp_date = datetime.now().strftime("%Y-%m-%d")
         timestamp_time = datetime.now().strftime("%H-%M-%S")
-        self.train_data_path = Path(self.cfg.paths.data_dir) / 'train_data' / timestamp_date / timestamp_time
+        self.train_data_path = Path(self.cfg.train.model_data) / timestamp_date / timestamp_time
         os.makedirs(self.train_data_path, exist_ok=True)
 
         # Parallel processing configuration

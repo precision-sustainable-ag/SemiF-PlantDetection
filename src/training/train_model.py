@@ -65,6 +65,7 @@ class TrainModel:
             imgsz=self.cfg.train.image_size,
             batch=self.cfg.train.batch_size,
             # workers=self.cfg.train.num_workers,
+            # TODO: change device id (s) to be in config to use different gpu(s)
             device=0 if torch.cuda.is_available() else 'cpu',
             # device='cpu',
             project=str(self.output_dir),
