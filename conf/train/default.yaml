@@ -1,0 +1,27 @@
+tasks:
+  - prepare_dataset
+  - train_model
+
+model_name: yolo11n.pt
+epochs: 5
+image_size: 640
+batch_size: 1
+# num_workers: 10
+# patience:
+# lr:
+# weight_decay:
+
+random_seed: 42
+validation_split: 0.2
+parallel: true
+parallel_workers: 16
+
+models_path: ${paths.data_dir}/models
+
+# path to data saved in ultralytics format and also has the train/val split information
+model_data: ${paths.data_dir}/model_data
+
+# Model hyperparameters
+# patience: 50
+# lr: 0.001
+# weight_decay: 0.0005

@@ -1,14 +1,16 @@
 import os
 import json
 import logging
-import shutil
 import pandas as pd
-import numpy as np
+import zipfile
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 from omegaconf import DictConfig
-from utils.utils import find_most_recent_dataset_path
 import cv2
+import shutil
+from multiprocessing import Pool, cpu_count
+
+from src.utils.utils import find_most_recent_dataset_path, convert_bbox_to_yolo_format
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -51,7 +53,6 @@ class CVATFormatter:
         
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.labels_dir.mkdir(parents=True, exist_ok=True)
-        
         # Set default image dimensions if not available in image files
         self.default_image_width = cfg.cvat.default_image_width
         self.default_image_height = cfg.cvat.default_image_height
@@ -61,10 +62,27 @@ class CVATFormatter:
         
         # Store class mapping from config
         self.class_mapping = cfg.cvat.class_mapping
+
+        # Parallel processing configuration
+        self.parallel = cfg.cvat.get('parallel', False)
+        self.parallel_workers = min(cfg.cvat.get('parallel_workers', cpu_count()), cpu_count())
         
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
         log.info(f"Using class mapping from config: {self.class_mapping}")
         log.info(f"Images will be resized by factor: {self.resize_factor}")
+        if self.parallel:
+            log.info(f"Parallel processing: {self.parallel} with {self.parallel_workers} workers")
+
+    def cleanup(self):
+        """
+        Destructor that deletes the CVAT dataset folder when the object is deleted.
+        """
+        try:
+            if self.cvat_output_folder.exists():
+                shutil.rmtree(self.cvat_output_folder)
+                log.info(f"Deleted CVAT dataset folder: {self.cvat_output_folder}")
+        except Exception as e:
+            log.error(f"Error deleting CVAT dataset folder: {e}")
 
     def load_dataset(self) -> pd.DataFrame:
         """
@@ -83,30 +101,6 @@ class CVATFormatter:
         except Exception as e:
             log.error(f"Error loading CSV file: {self.csv_file_path} - {e}")
             raise
-
-    def convert_bbox_to_yolo_format(self, bbox: List[int], image_width: int, image_height: int) -> List[float]:
-        """
-        Convert bounding box from [x, y, width, height] (top-left) to YOLO format [class_id, center_x, center_y, width, height] (normalized).
-        
-        Args:
-            bbox (List[int]): Bounding box in [x, y, width, height] format
-            image_width (int): Width of the image
-            image_height (int): Height of the image
-            
-        Returns:
-            List[float]: Bounding box in YOLO format [center_x, center_y, width, height] (normalized)
-        """
-        x, y, width, height = bbox
-        
-        # Convert to center coordinates
-        center_x = (x + width / 2) / image_width
-        center_y = (y + height / 2) / image_height
-        
-        # Normalize width and height
-        normalized_width = width / image_width
-        normalized_height = height / image_height
-        
-        return [center_x, center_y, normalized_width, normalized_height]
 
     def process_image(self, row: pd.Series) -> None:
         """
@@ -184,15 +178,20 @@ class CVATFormatter:
                 else:
                     mapped_class_id = int(self.class_mapping.plant)
                 
-                # Convert bounding box to YOLO format using new dimensions
-                center_x, center_y, norm_width, norm_height = self.convert_bbox_to_yolo_format(
+                center_x, center_y, norm_width, norm_height = convert_bbox_to_yolo_format(
                     scaled_bbox, new_width, new_height
                 )
+                
                 # Write to annotation file with mapped class ID
                 f.write(f"{mapped_class_id} {center_x:.6f} {center_y:.6f} {norm_width:.6f} {norm_height:.6f}\n")
         
         log.debug(f"Processed image {image_id} (resized to {new_width}x{new_height})")
 
+    def process_img_wrapper(self, row):
+        try:
+            self.process_image(row)
+        except Exception as e:
+            log.error(f"Error processing image {row['image_id']}")
     def create_train_txt(self) -> None:
         """
         Create the train.txt file containing paths to all images.
@@ -262,9 +261,16 @@ class CVATFormatter:
         
         # Get unique class IDs
         class_names = self.get_unique_class_ids(df)
-        # Process each image
-        for _, row in df.iterrows():
-            self.process_image(row)
+
+        # Process images in parallel or sequentially
+        if self.parallel:
+            log.info(f"Processing images in parallel with {self.parallel_workers} workers")
+            with Pool(processes=self.parallel_workers) as pool:
+                pool.map(self.process_image, [row for _, row in df.iterrows()])
+        else:
+            log.info("Processing images sequentially")
+            for _, row in df.iterrows():
+                self.process_image(row)
         
         # Create train.txt
         self.create_train_txt()
@@ -281,8 +287,6 @@ class CVATFormatter:
         """
         Create a zip archive of the CVAT dataset.
         """
-        import zipfile
-        
         # Output zip file path
         zip_path = self.cvat_output_folder.parent / f"{self.cvat_output_folder.name}.zip"
         
@@ -294,7 +298,9 @@ class CVATFormatter:
                     arcname = os.path.relpath(file_path, self.cvat_output_folder.parent)
                     zipf.write(file_path, arcname)
         
-        log.info(f"Created zip archive: {zip_path}") 
+        log.info(f"Created zip archive: {zip_path}")
+    
+    
 
 def main(cfg: DictConfig) -> None:
     """
@@ -315,6 +321,7 @@ def main(cfg: DictConfig) -> None:
     
     formatter = CVATFormatter(cfg)
     formatter.format_for_cvat()
+    formatter.cleanup()
     
     log.info("CVAT formatter task completed")
 

@@ -1,0 +1,5 @@
+tasks:
+  - training_dataset
+  - download_images
+  - cvat_formatter
+  - cvat_importer

@@ -4,13 +4,12 @@ import logging
 import json
 import random
 import os
+from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Set
-import hydra
+from typing import Tuple, Set
 import math
 from omegaconf import DictConfig
 import pandas as pd
-from pathlib import Path
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -42,17 +41,21 @@ class TrainingDatasetGenerator:
         self.other_species_recency_ratio = cfg.dataset.other_species_recency_ratio
         self.ratios = cfg.dataset.ratios
         
-        # Create timestamped output directory
+        # Define timestamped output directory
         base_output_path = cfg.dataset.output_path
         timestamp_date = datetime.now().strftime("%Y-%m-%d")
         timestamp_time = datetime.now().strftime("%H-%M-%S")
         self.output_path = os.path.join(base_output_path, timestamp_date, timestamp_time)
-        os.makedirs(self.output_path, exist_ok=True)
 
         # Set random seed for reproducibility
         random.seed(self.random_seed)
         
         # Connect to the database
+        if not Path(self.db_path).exists():
+            log.error(f"Database file not found: {self.db_path}")
+            log.info(f"Make sure you have run the copy_db.sh script to download the database: 'bash scripts/copy_db.sh'")
+            raise FileNotFoundError(f"Database file not found: {self.db_path}")
+        
         self.conn = sqlite3.connect(self.db_path)
         log.info(f"Connected to database: {self.db_path}")
         
@@ -363,6 +366,7 @@ class TrainingDatasetGenerator:
         Args:
             images (pd.DataFrame): Selected images for training
         """
+        os.makedirs(self.output_path, exist_ok=True)
         # Save to CSV
         output_images_path = os.path.join(self.output_path, "training_images.csv")
         images.to_csv(output_images_path, index=False)
@@ -445,7 +449,10 @@ def main(cfg: DictConfig) -> None:
     generator = TrainingDatasetGenerator(cfg.database)
     try:
         images = generator.generate()
-        log.info(f"Successfully generated training dataset with {len(images)} images")
+        log.info(f"Successfully generated training data subset with {len(images)} images")
+    except Exception as e:
+        log.error(f"Error generating training data subset - {e}")
+        raise ValueError(f"Error generating training data subset")
     finally:
         generator.close()
 

@@ -30,7 +30,7 @@ dataset:
   
   # Output path for dataset
   # TODO: add a timestamp to the output path (like outputs)
-  output_path: ${paths.data_dir}/training_dataset
+  output_path: ${paths.data_dir}/data_csvs
   
   # Random seed for reproducibility
   random_seed: 42 

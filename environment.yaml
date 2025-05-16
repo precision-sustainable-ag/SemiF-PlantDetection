@@ -12,6 +12,12 @@ dependencies:
   - sqlite
   - cvat-sdk
   - opencv
+  - scikit-learn
+  - ultralytics
+  - pip
+  - pip:
+    - torch
+    - torchvision
   # - matplotlib
   # - seaborn
   # - scikit-learn

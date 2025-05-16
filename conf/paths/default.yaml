@@ -10,7 +10,7 @@ log_dir: ${paths.root_dir}/logs/
 
 # path to database
 # db_path: /Users/jbshah/_p/test/agir.db
-db_path: ./agir.db
+db_path: ${paths.root_dir}/data/db/agir.db
 
 # path to secrets directory
 secrets_dir: ${paths.root_dir}/secrets/
@@ -22,3 +22,7 @@ lts_locations:
   - /mnt/research-projects/s/screberg/longterm_images
   - /mnt/research-projects/s/screberg/GROW_DATA
   - /mnt/research-projects/s/screberg/longterm_images2
+
+lts_human_annotations:
+  # - /Volumes/screberg/longterm_images2/semifield-database/plant-detection/annotations/
+  - /mnt/research-projects/s/screberg/longterm_images2/semifield-database/plant-detection/annotations/

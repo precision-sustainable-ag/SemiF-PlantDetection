@@ -1,36 +1,35 @@
 import logging
-import os
 import sys
 
 import hydra
-from hydra.utils import get_method
 from omegaconf import DictConfig, OmegaConf
+from src.preprocess import main as preprocess
+from src.train import main as train
 
 sys.path.append("src")
 
 log = logging.getLogger(__name__)
 
+MODE_REGISTRY = {
+    "preprocess": preprocess,
+    "train": train
+}
 
 @hydra.main(version_base="1.2", config_path="conf", config_name="config")
 def run(cfg: DictConfig) -> None:
     cfg = OmegaConf.create(cfg)
-    log.info(f"Starting task {','.join(cfg.tasks)}")
+    log.info(f"************************************************")
+    log.info(f"Pipeline mode: {cfg.mode}")
+    log.info(f"************************************************")
 
-    for tsk in cfg.tasks:
-        try:
-            # Map task names to module names if needed
-            task_mapping = {
-                "training_dataset": "training_dataset.main",
-                "download_images": "download_images.main"
-            }
-            
-            task_function = task_mapping.get(tsk, f"{tsk}.main")
-            task = get_method(task_function)
-            task(cfg)
-
-        except Exception as e:
-            log.exception(f"Failed to execute task {tsk}: {e}")
-            return
+    if cfg.mode not in MODE_REGISTRY:
+        log.error(f"Mode {cfg.mode} not found in MODE_REGISTRY")
+        raise ValueError(f"Mode {cfg.mode} not found in MODE_REGISTRY")
+    try:
+        MODE_REGISTRY[cfg.mode](cfg)
+    except Exception as e:
+        log.error(f"Failed to execute pipeline mode {cfg.mode}: {e}")
+        raise ValueError(f"Failed to execute pipeline mode {cfg.mode}")
 
 
 if __name__ == "__main__":
