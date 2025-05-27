@@ -1,0 +1,7 @@
+hydra-core
+pandas
+opencv-python
+cvat-sdk
+scikit-learn
+torch
+ultralytics

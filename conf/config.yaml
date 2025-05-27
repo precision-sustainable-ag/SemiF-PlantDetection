@@ -9,10 +9,12 @@ defaults:
 # list of tasks available in mode specific config
 mode: preprocess
 
+project:
+  name: anuraag_test
 
 # used mainly in download_images
 images:
-  output_path: ${paths.data_dir}/images
+  output_path: ${paths.preprocess.image_dir}
   parallel: true
   parallel_workers: 16
 

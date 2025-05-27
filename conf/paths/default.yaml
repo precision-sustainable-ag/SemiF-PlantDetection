@@ -5,12 +5,24 @@ root_dir: ${hydra:runtime.cwd}
 # path to data directory
 data_dir: ${paths.root_dir}/data/
 
+# project dir path (project.name from config.yaml)
+project_dir: ${paths.root_dir}/projects/${project.name}
+
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/
 
+# preprocess output paths
+preprocess:
+  csv_dir: ${paths.project_dir}/preprocess/data/data_csvs
+  image_dir: ${paths.project_dir}/preprocess/data/images
+  model_data_dir: ${paths.project_dir}/preprocess/data/model_data
+
+# training output paths
+train:
+  output_dir: ${paths.project_dir}/train
+
 # path to database
-# db_path: /Users/jbshah/_p/test/agir.db
-db_path: ${paths.root_dir}/data/db/agir.db
+db_path: ${paths.data_dir}/db/agir.db
 
 # path to secrets directory
 secrets_dir: ${paths.root_dir}/secrets/
