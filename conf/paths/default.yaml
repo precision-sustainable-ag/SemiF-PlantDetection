@@ -13,6 +13,7 @@ log_dir: ${paths.root_dir}/logs/
 
 # preprocess output paths
 preprocess:
+  cvat_dir: ${paths.project_dir}/preprocess
   csv_dir: ${paths.project_dir}/preprocess/data/data_csvs
   image_dir: ${paths.project_dir}/preprocess/data/images
   model_data_dir: ${paths.project_dir}/preprocess/data/model_data

@@ -38,6 +38,11 @@ class CVATImporter:
         self.cvat_client.projects.create_from_dataset(spec=project_spec,
                                                       dataset_path=str(self.zip_path),
                                                       dataset_format=self.cvat_dataset_format)
+
+        # Save project name to file for later export
+        project_name_file = Path(self.cfg.paths.preprocess.cvat_dir) / "latest_cvat_project.txt"
+        project_name_file.write_text(project_name)
+        log.info(f"Saved created CVAT project name to {project_name_file}")
         
         return project_name
 
