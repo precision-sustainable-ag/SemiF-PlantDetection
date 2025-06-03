@@ -32,7 +32,7 @@ lts_locations:
   # - /Volumes/screberg/GROW_DATA
   # - /Volumes/screberg/longterm_images2
   - /mnt/research-projects/s/screberg/longterm_images
-  - /mnt/research-projects/s/screberg/GROW_DATA
+  # - /mnt/research-projects/s/screberg/GROW_DATA
   - /mnt/research-projects/s/screberg/longterm_images2
 
 lts_human_annotations:

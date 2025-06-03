@@ -20,7 +20,7 @@ images:
 
 # used mainly in cvat_formatter and cvat_importer
 cvat:
-  output_path: ${paths.data_dir}/cvat_dataset
+  output_path: ${paths.project_dir}/cvat_dataset
   default_image_width: 9560
   default_image_height: 6368
   resize_factor: 0.75
