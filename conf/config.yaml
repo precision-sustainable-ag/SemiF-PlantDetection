@@ -9,16 +9,18 @@ defaults:
 # list of tasks available in mode specific config
 mode: preprocess
 
+project:
+  name: anuraag_test_2
 
 # used mainly in download_images
 images:
-  output_path: ${paths.data_dir}/images
+  output_path: ${paths.preprocess.image_dir}
   parallel: true
   parallel_workers: 16
 
 # used mainly in cvat_formatter and cvat_importer
 cvat:
-  output_path: ${paths.data_dir}/cvat_dataset
+  output_path: ${paths.project_dir}/cvat_dataset
   default_image_width: 9560
   default_image_height: 6368
   resize_factor: 0.75

@@ -11,7 +11,7 @@ class CVATImporter:
         self.cfg = cfg
         self.cvat_secrets = read_secrets(cfg.secrets_path)['cvat']
         self.cvat_dataset_format = cfg.cvat.dataset_format
-        self.zip_path = Path(self.cfg.paths.data_dir, "cvat_dataset.zip")
+        self.zip_path = Path(self.cfg.paths.project_dir, "cvat_dataset.zip")
     
     def login(self):
         """
