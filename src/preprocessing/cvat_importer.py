@@ -1,4 +1,5 @@
 import logging
+import requests
 from omegaconf import DictConfig
 from pathlib import Path
 from cvat_sdk import Client, models
@@ -19,6 +20,23 @@ class CVATImporter:
         """
         self.cvat_client = Client(self.cvat_secrets['url'])
         self.cvat_client.login(credentials=[self.cvat_secrets['username'], self.cvat_secrets['password']])
+
+    def rename_task_via_rest(self, task_id: int, new_name: str):
+        """Rename a CVAT task using a direct REST API PATCH call"""
+        url = f"{self.cvat_secrets['url']}/api/tasks/{task_id}"
+        auth = (self.cvat_secrets['username'], self.cvat_secrets['password'])
+
+        response = requests.patch(
+            url,
+            auth=auth,
+            headers={"Content-Type": "application/json"},
+            json={"name": new_name}
+        )
+
+        if response.ok:
+            log.info(f"Renamed task ID {task_id} to '{new_name}'")
+        else:
+            log.error(f"Failed to rename task ID {task_id}: {response.status_code}, {response.text}")
     
     def create_project(self) -> str:
         """
@@ -33,11 +51,22 @@ class CVATImporter:
         time_parts = path_parts[-1].split('-') if len(path_parts) >= 1 else ["00", "00", "00"]
         hour_min = f"{time_parts[0]}-{time_parts[1]}" if len(time_parts) >= 2 else "00-00"
 
-        project_name = f"Plant detection {date_str} ({hour_min})"
-        project_spec = models.ProjectWriteRequest(name=project_name)
-        self.cvat_client.projects.create_from_dataset(spec=project_spec,
-                                                      dataset_path=str(self.zip_path),
-                                                      dataset_format=self.cvat_dataset_format)
+        project_name = self.cfg.project.name 
+        task_name = self.cfg.project.task_name
+
+        project = self.cvat_client.projects.create_from_dataset(
+            spec=models.ProjectWriteRequest(name=project_name),
+            dataset_path=str(self.zip_path),
+            dataset_format=self.cvat_dataset_format
+        )
+
+        tasks = self.cvat_client.tasks.list()
+        task = next((t for t in tasks if t.project_id == project.id), None)
+
+        if not task:
+            log.warning(f"No task found in project '{project_name}'")
+        else:
+            self.rename_task_via_rest(task.id, task_name)
         
         return project_name
 
