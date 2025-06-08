@@ -6,7 +6,7 @@ root_dir: ${hydra:runtime.cwd}
 data_dir: ${paths.root_dir}/data/
 
 # project dir path (project.name from config.yaml)
-project_dir: ${paths.root_dir}/projects/${project.name}
+project_dir: ${paths.root_dir}/projects/${project.name}/${project.task_name}
 
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/

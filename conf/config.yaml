@@ -10,7 +10,7 @@ defaults:
 mode: preprocess
 
 project:
-  name: anuraag_test_2
+  name: anuraag_test_3
   task_name: custom_task
 
 # used mainly in download_images

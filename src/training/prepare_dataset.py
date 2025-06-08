@@ -194,6 +194,20 @@ def main(cfg: DictConfig):
      - Expects a path to a directory containing human annotations
      - Will take latest training_images csv and merge with human annotations
     """
+
+    # checks for project and task before running the train pipeline
+    project_dir = Path("projects") / cfg.project.name
+    task_dir = project_dir / cfg.project.task_name
+
+    if task_dir.exists():
+        log.info(f"Project '{cfg.project.name}' and task '{cfg.project.task_name}' already exist. Proceeding with existing directory.")
+    else:
+        if project_dir.exists():
+            log.info(f"Project '{cfg.project.name}' exists. Creating new task directory '{cfg.project.task_name}'.")
+        else:
+            log.info(f"Creating new project and task directories: {cfg.project.name}/{cfg.project.task_name}")
+        task_dir.mkdir(parents=True, exist_ok=False)
+
     prepare_dataset = PrepareDataset(cfg)
     dataset_path = prepare_dataset.run()
     log.info(f"Dataset prepared at {dataset_path}")
