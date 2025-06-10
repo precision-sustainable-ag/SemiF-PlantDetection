@@ -6,7 +6,7 @@ root_dir: ${hydra:runtime.cwd}
 data_dir: ${paths.root_dir}/data/
 
 # project dir path (project.name from config.yaml)
-project_dir: ${paths.root_dir}/projects/${project.name}
+project_dir: ${paths.root_dir}/projects/${project.name}/${project.task_name}
 
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/
@@ -32,7 +32,7 @@ lts_locations:
   # - /Volumes/screberg/GROW_DATA
   # - /Volumes/screberg/longterm_images2
   - /mnt/research-projects/s/screberg/longterm_images
-  # - /mnt/research-projects/s/screberg/GROW_DATA
+  - /mnt/research-projects/s/screberg/GROW_DATA
   - /mnt/research-projects/s/screberg/longterm_images2
 
 lts_human_annotations:

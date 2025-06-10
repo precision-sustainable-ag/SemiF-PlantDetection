@@ -13,7 +13,9 @@ def main(cfg: DictConfig):
     """
     Main entrypoint for train mode
     - prepare_dataset
+    - train_model
     """
+
     for task in cfg.train.tasks:
         if task in TASK_REGISTRY:
             log.info(f"Running task: {task}")

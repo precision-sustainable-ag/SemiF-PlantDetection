@@ -41,11 +41,8 @@ class TrainingDatasetGenerator:
         self.other_species_recency_ratio = cfg.dataset.other_species_recency_ratio
         self.ratios = cfg.dataset.ratios
         
-        # Define timestamped output directory
-        base_output_path = cfg.dataset.output_path
-        timestamp_date = datetime.now().strftime("%Y-%m-%d")
-        timestamp_time = datetime.now().strftime("%H-%M-%S")
-        self.output_path = os.path.join(base_output_path, timestamp_date, timestamp_time)
+        # Define path of output directory
+        self.output_path = cfg.dataset.output_path
 
         # Set random seed for reproducibility
         random.seed(self.random_seed)
@@ -440,7 +437,20 @@ def main(cfg: DictConfig) -> None:
     """
     # Print the configuration
     # log.info(f"Configuration:\n{cfg}")
-    
+
+    # checks for project and task before running the preprocess pipeline
+    project_dir = Path("projects") / cfg.project.name
+    task_dir = project_dir / cfg.project.task_name
+
+    if task_dir.exists():
+        log.info(f"Project '{cfg.project.name}' and task '{cfg.project.task_name}' already exist. Proceeding with existing directory.")
+    else:
+        if project_dir.exists():
+            log.info(f"Project '{cfg.project.name}' exists. Creating new task directory '{cfg.project.task_name}'.")
+        else:
+            log.info(f"Creating new project and task directories: {cfg.project.name}/{cfg.project.task_name}")
+        task_dir.mkdir(parents=True, exist_ok=False)
+
     # check if ratios sum to 1.0
     # adding tolerance due to floating point precision errors
     if not math.isclose(sum(cfg.database.dataset.ratios.values()), 1.0, rel_tol=1e-5):

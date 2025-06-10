@@ -23,9 +23,7 @@ class ImageDownloader:
         Args:
             cfg (DictConfig): Hydra configuration
         """
-        # Find the most recent dataset directory
-        base_dataset_path = Path(cfg.database.dataset.output_path)
-        self.dataset_path = find_most_recent_dataset_path(base_dataset_path)
+        self.dataset_path = Path(cfg.database.dataset.output_path)
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
         self.storage_bases = []
