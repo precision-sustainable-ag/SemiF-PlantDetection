@@ -5,6 +5,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from src.preprocess import main as preprocess
 from src.train import main as train
+from src.export import main as export
 
 sys.path.append("src")
 
@@ -12,7 +13,8 @@ log = logging.getLogger(__name__)
 
 MODE_REGISTRY = {
     "preprocess": preprocess,
-    "train": train
+    "train": train,
+    "export" : export
 }
 
 @hydra.main(version_base="1.2", config_path="conf", config_name="config")

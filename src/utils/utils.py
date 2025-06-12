@@ -61,6 +61,10 @@ def get_annotated_image_ids(lts_locations):
     Returns:
         List[str]: image ids for images already annotated
     """
+    # Wraps string or path inside a list
+    if isinstance(lts_locations, (str, Path)):
+        lts_locations = [lts_locations]
+
     image_ids = {}
     # TODO: check data.yaml in each subdirectory to verify 3 classes
     # Check if base path exists
@@ -69,23 +73,20 @@ def get_annotated_image_ids(lts_locations):
         if not base_path.exists():
             log.warning(f"Base path does not exist: {base_path}")
             continue
+
         # Go through all directories in the base path
-        for directory in [d for d in base_path.iterdir() if d.is_dir()]:
-            # Look for 'labels' subfolder
-            labels_dir = directory / "labels"
-            if labels_dir.exists() and labels_dir.is_dir():
-                # Use recursive glob to get all txt files in labels directory and its subfolders
-                txt_files = labels_dir.glob("**/*.txt")
-                # Extract filenames without extension and add to image_ids
-                for txt_file in txt_files:
-                    image_id = txt_file.stem  # Get filename without extension
-                    if image_id in image_ids.keys():
-                        log.error(f"Found multiple annotations for {image_id}")
-                        raise ValueError(f"Found multiple annotations for {image_id}")
-                    
-                    image_ids[image_id] = txt_file
-                    # image_ids.append(image_id)
-                    # full_paths.append(txt_file)
+        
+        # Look for annotations as .txt files in this directory
+        txt_files = base_path.glob("*.txt")
+        # Extract filenames without extension and add to image_ids
+        for txt_file in txt_files:
+            image_id = txt_file.stem  # Get filename without extension
+            if image_id in image_ids.keys():
+                log.error(f"Found multiple annotations for {image_id}")
+                raise ValueError(f"Found multiple annotations for {image_id}")
+            image_ids[image_id] = txt_file
+                # image_ids.append(image_id)
+                # full_paths.append(txt_file)
     
     log.info(f"Found {len(image_ids)} annotated image IDs")
     return image_ids

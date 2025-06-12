@@ -16,10 +16,9 @@ validation_split: 0.2
 parallel: true
 parallel_workers: 16
 
-models_path: ${paths.train.output_dir}/models
-
+models_path: ${paths.train.model_dir}
 # path to data saved in ultralytics format and also has the train/val split information
-model_data: ${paths.preprocess.model_data_dir}
+model_data: ${paths.train.model_data_dir}
 
 # Model hyperparameters
 # patience: 50

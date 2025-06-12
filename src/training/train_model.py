@@ -22,9 +22,9 @@ class TrainModel:
         self.cfg = cfg
         
         # Set up paths
-        self.data_path = find_most_recent_dataset_path(Path(self.cfg.train.model_data))
+        self.data_path = (Path(self.cfg.train.model_data))
         log.info(f"Using dataset at {self.data_path}")
-        self.output_dir = Path(self.cfg.train.models_path) / self.data_path.parent.name / self.data_path.name
+        self.output_dir = Path(self.cfg.train.models_path)
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create data.yaml
@@ -69,7 +69,7 @@ class TrainModel:
             device=0 if torch.cuda.is_available() else 'cpu',
             # device='cpu',
             project=str(self.output_dir),
-            name='run1',
+            name='run',
             save=True,
             # patience=self.cfg.train.patience,
             # lr0=self.cfg.train.lr,
@@ -78,7 +78,7 @@ class TrainModel:
         
         # Save the model
         model.export()
-        log.info(f"Model trained and saved to {self.output_dir}/run1")
+        log.info(f"Model trained and saved to {results.save_dir}")
         
         return results
         
