@@ -15,6 +15,7 @@ log_dir: ${paths.root_dir}/logs/
 preprocess:
   csv_dir: ${paths.project_dir}/preprocess/data_csvs
   image_dir: ${paths.project_dir}/preprocess/images
+  label_dir: ${paths.project_dir}/preprocess/annotations
 
 # training output paths
 train:

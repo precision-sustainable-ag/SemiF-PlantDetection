@@ -19,8 +19,7 @@ class CVATExporter:
         self.task_name = cfg.project.task_name
 
         # output directory for annotations
-        self.project_annotations_dir = Path(cfg.paths.root_dir, "projects", self.project_name, self.task_name, "annotations")
-        self.project_annotations_dir.mkdir(parents=True, exist_ok=True)
+        self.project_annotations_dir = Path(cfg.paths.preprocess.label_dir)
 
         # LTS path for annotations
         self.lts_annotations_dir = Path(cfg.paths.lts_human_annotations)
@@ -135,6 +134,9 @@ class CVATExporter:
         job = self.get_task_and_job()
         if job is None:
             return
+
+        # make the annotations dir after making sure that the project/task exists in cvat
+        self.project_annotations_dir.mkdir(parents=True, exist_ok=True)
 
         rq_id = self.export_annotations(job.id)
         download_url = self.poll_export_status(rq_id)
