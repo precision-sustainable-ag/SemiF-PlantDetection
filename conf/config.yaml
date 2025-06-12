@@ -4,8 +4,9 @@ defaults:
   - _self_
   - preprocess: default
   - train: default
+  - export: default
 # each mode is a pipeline mode
-# preprocess/train
+# preprocess/train/export
 # list of tasks available in mode specific config
 mode: preprocess
 
