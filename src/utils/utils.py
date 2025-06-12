@@ -75,18 +75,18 @@ def get_annotated_image_ids(lts_locations):
             continue
 
         # Go through all directories in the base path
-        for directory in [d for d in base_path.iterdir() if d.is_dir()]:
-            # Look for annotations as .txt files in this directory
-            txt_files = directory.glob("*.txt")
-            # Extract filenames without extension and add to image_ids
-            for txt_file in txt_files:
-                image_id = txt_file.stem  # Get filename without extension
-                if image_id in image_ids.keys():
-                    log.error(f"Found multiple annotations for {image_id}")
-                    raise ValueError(f"Found multiple annotations for {image_id}")
-                image_ids[image_id] = txt_file
-                    # image_ids.append(image_id)
-                    # full_paths.append(txt_file)
+        
+        # Look for annotations as .txt files in this directory
+        txt_files = base_path.glob("*.txt")
+        # Extract filenames without extension and add to image_ids
+        for txt_file in txt_files:
+            image_id = txt_file.stem  # Get filename without extension
+            if image_id in image_ids.keys():
+                log.error(f"Found multiple annotations for {image_id}")
+                raise ValueError(f"Found multiple annotations for {image_id}")
+            image_ids[image_id] = txt_file
+                # image_ids.append(image_id)
+                # full_paths.append(txt_file)
     
     log.info(f"Found {len(image_ids)} annotated image IDs")
     return image_ids
