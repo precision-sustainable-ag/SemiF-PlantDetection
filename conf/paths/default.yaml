@@ -13,9 +13,8 @@ log_dir: ${paths.root_dir}/logs/
 
 # preprocess output paths
 preprocess:
-  csv_dir: ${paths.project_dir}/preprocess/data/data_csvs
-  image_dir: ${paths.project_dir}/preprocess/data/images
-  # model_data_dir: ${paths.project_dir}/preprocess/data/model_data
+  csv_dir: ${paths.project_dir}/preprocess/data_csvs
+  image_dir: ${paths.project_dir}/preprocess/images
 
 # training output paths
 train:
@@ -29,9 +28,6 @@ db_path: ${paths.data_dir}/db/agir.db
 secrets_dir: ${paths.root_dir}/secrets/
 
 lts_locations:
-  # - /Volumes/screberg/longterm_images
-  # - /Volumes/screberg/GROW_DATA
-  # - /Volumes/screberg/longterm_images2
   - /mnt/research-projects/s/screberg/longterm_images
   - /mnt/research-projects/s/screberg/GROW_DATA
   - /mnt/research-projects/s/screberg/longterm_images2
