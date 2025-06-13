@@ -1,15 +1,21 @@
-from omegaconf import DictConfig
-from src.utils.utils import get_annotated_image_ids, find_most_recent_dataset_path, convert_bbox_to_yolo_format
-from pathlib import Path
-import pandas as pd
-import logging
 import os
-import shutil
-from sklearn.model_selection import train_test_split
-from datetime import datetime
-import json
 import cv2
+import json
+import shutil
+import logging
+import pandas as pd
+
+from pathlib import Path
+from datetime import datetime
 from multiprocessing import Pool, cpu_count
+from sklearn.model_selection import train_test_split
+from omegaconf import DictConfig
+
+from src.utils.utils import (
+    get_annotated_image_ids,
+    find_most_recent_dataset_path,
+    convert_bbox_to_yolo_format
+)
 
 log = logging.getLogger(__name__)
 
@@ -28,11 +34,25 @@ class PrepareDataset:
         self.train_data_path = Path(self.cfg.train.model_data)
         os.makedirs(self.train_data_path, exist_ok=True)
 
+        self.preprocess_images_path = Path(self.cfg.paths.preprocess.image_dir)
+        self.preprocess_annotations_path = Path(self.cfg.paths.preprocess.label_dir)
+
         # Parallel processing configuration
         self.parallel = self.cfg.train.get('parallel', False)
         self.parallel_workers = min(self.cfg.train.get('parallel_workers', cpu_count()), cpu_count())
         if self.parallel:
             log.info(f"Parallel processing enabled with {self.parallel_workers} workers")
+
+    def _cleanup_preprocess_dirs(self):
+        try:
+            if self.preprocess_images_path.exists():
+                shutil.rmtree(self.preprocess_images_path)
+                log.info(f"Deleted preprocess image directory: {self.preprocess_images_path}")
+            if self.preprocess_annotations_path.exists():
+                shutil.rmtree(self.preprocess_annotations_path)
+                log.info(f"Deleted preprocess annotations directory: {self.preprocess_annotations_path}")
+        except Exception as e:
+            log.warning(f"Failed to clean up preprocess directories: {e}")
 
     def process_image(self, row, type):
         """
@@ -184,6 +204,7 @@ class PrepareDataset:
         log.info(f"Found {len(self.human_annotations)} human annotations")
         df = self.identify_training_data()
         self.structure_data(df)
+        self._cleanup_preprocess_dirs()
         return self.train_data_path
 
 def main(cfg: DictConfig):
