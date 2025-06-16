@@ -15,6 +15,7 @@ log_dir: ${paths.root_dir}/logs/
 preprocess:
   csv_dir: ${paths.project_dir}/preprocess/data_csvs
   image_dir: ${paths.project_dir}/preprocess/images
+  cvat_output: ${paths.project_dir}/cvat_dataset
   label_dir: ${paths.project_dir}/preprocess/annotations
 
 # training output paths
@@ -26,7 +27,7 @@ train:
 db_path: ${paths.data_dir}/db/agir.db
 
 # path to secrets directory
-secrets_dir: ${paths.root_dir}/secrets/
+secrets: ${paths.root_dir}/secrets/default.yaml
 
 lts_locations:
   - /mnt/research-projects/s/screberg/longterm_images

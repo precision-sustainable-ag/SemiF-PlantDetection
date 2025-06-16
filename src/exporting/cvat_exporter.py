@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 class CVATExporter:
     def __init__(self, cfg: DictConfig) -> None:
         self.cfg = cfg
-        self.cvat_secrets = read_secrets(cfg.secrets_path)['cvat']
+        self.cvat_secrets = read_secrets(cfg.paths.secrets)['cvat']
         self.dataset_format = cfg.cvat.dataset_format
         self.project_name = cfg.project.name
         self.task_name = cfg.project.task_name

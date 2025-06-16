@@ -1,28 +1,28 @@
 defaults:
-  - database: training_dataset
+  - database: default
   - paths: default
   - _self_
   - preprocess: default
-  - train: default
   - export: default
+  - train: default
+
 # each mode is a pipeline mode
 # preprocess/train/export
 # list of tasks available in mode specific config
 mode: preprocess
 
+# used to reference project and task in CVAT
 project:
   name: anuraag_test_3
   task_name: custom_task
 
 # used mainly in download_images
 images:
-  output_path: ${paths.preprocess.image_dir}
   parallel: true
   parallel_workers: 16
 
 # used mainly in cvat_formatter and cvat_importer
 cvat:
-  output_path: ${paths.project_dir}/cvat_dataset
   default_image_width: 9560
   default_image_height: 6368
   resize_factor: 0.75
@@ -34,5 +34,3 @@ cvat:
     color_checker: 2
   dataset_format: "Ultralytics YOLO Detection 1.0"
 
-# configure credentials
-secrets_path: ${paths.secrets_dir}/default.yaml
