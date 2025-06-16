@@ -67,7 +67,7 @@ class PrepareDataset:
         # Find source image - assuming .jpg extension
         train_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
         preprocess_image_path = Path(self.cfg.paths.preprocess.image_dir) / f"{image_id}.jpg"
-        
+
         # Destination paths for the image and label in Ultralytics format
         dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
         dest_label_path = self.train_data_path / type / 'labels' / f"{image_id}.txt"
@@ -81,6 +81,10 @@ class PrepareDataset:
             log.warning(f"Source image not found in train or preprocess: {image_id}, will need to copy from LTS")
             # TODO: try to get it from LTS if not exists
             return
+        
+        # Only copy if source and destination are different paths
+        if source_image_path.resolve() != dest_image_path.resolve():
+            shutil.copy(source_image_path, dest_image_path)
         
         if image_id in self.human_annotations.keys():
             shutil.copy(self.human_annotations[image_id], dest_label_path)
