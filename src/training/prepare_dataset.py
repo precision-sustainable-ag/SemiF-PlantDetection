@@ -24,7 +24,7 @@ class PrepareDataset:
         # TODO: save dataset to a different location - causing issues with getting latest csv
         self.cfg = cfg
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
-        self.dataset_path = find_most_recent_dataset_path(self.cfg.database.dataset.output_path)
+        self.dataset_path = self.cfg.database.dataset.output_path
         self.data_csv = self.dataset_path / 'training_images.csv'
         self.class_mapping = self.cfg.cvat.class_mapping
 
@@ -65,17 +65,20 @@ class PrepareDataset:
         image_id = row['image_id']
         
         # Find source image - assuming .jpg extension
-        source_image_path = Path(self.cfg.images.output_path) / f"{image_id}.jpg"
+        train_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
+        preprocess_image_path = Path(self.cfg.images.output_path) / f"{image_id}.jpg"
         
         # Destination paths for the image and label in Ultralytics format
         dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
         dest_label_path = self.train_data_path / type / 'labels' / f"{image_id}.txt"
         
         # Copy image if it exists
-        if source_image_path.exists():
-            shutil.copy(source_image_path, dest_image_path)
+        if train_image_path.exists():
+            source_image_path = train_image_path
+        elif preprocess_image_path.exists():
+            source_image_path = preprocess_image_path
         else:
-            log.warning(f"Source image not found: {source_image_path}, will need to copy from LTS")
+            log.warning(f"Source image not found in train or preprocess: {image_id}, will need to copy from LTS")
             # TODO: try to get it from LTS if not exists
             return
         
