@@ -30,19 +30,19 @@ class TrainingDatasetGenerator:
         Args:
             cfg (DictConfig): Hydra configuration containing database path and dataset settings.
         """
-        self.db_path = cfg.db_path
-        self.dataset_size = cfg.dataset.size
-        self.priority_species = cfg.dataset.priority_species
+        self.db_path = cfg.paths.db_path
+        self.dataset_size = cfg.database.dataset.size
+        self.priority_species = cfg.database.dataset.priority_species
         # self.priority_class_ids = None
-        # self.priority_ratio = cfg.dataset.priority_ratio
-        self.min_per_class = cfg.dataset.min_per_class
-        self.random_seed = cfg.dataset.random_seed
-        # self.priority_recent_ratio = cfg.dataset.selection.priority_recent_ratio
-        self.other_species_recency_ratio = cfg.dataset.other_species_recency_ratio
-        self.ratios = cfg.dataset.ratios
+        # self.priority_ratio = cfg.database.dataset.priority_ratio
+        self.min_per_class = cfg.database.dataset.min_per_class
+        self.random_seed = cfg.database.dataset.random_seed
+        # self.priority_recent_ratio = cfg.database.dataset.selection.priority_recent_ratio
+        self.other_species_recency_ratio = cfg.database.dataset.other_species_recency_ratio
+        self.ratios = cfg.database.dataset.ratios
         
         # Define path of output directory
-        self.output_path = cfg.dataset.output_path
+        self.output_path = cfg.paths.preprocess.csv_dir
 
         # Set random seed for reproducibility
         random.seed(self.random_seed)
@@ -456,7 +456,7 @@ def main(cfg: DictConfig) -> None:
     if not math.isclose(sum(cfg.database.dataset.ratios.values()), 1.0, rel_tol=1e-5):
         log.error("Ratios must sum to 1.0")
         raise ValueError("Ratios must sum to 1.0")
-    generator = TrainingDatasetGenerator(cfg.database)
+    generator = TrainingDatasetGenerator(cfg)
     try:
         images = generator.generate()
         log.info(f"Successfully generated training data subset with {len(images)} images")

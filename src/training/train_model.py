@@ -22,9 +22,9 @@ class TrainModel:
         self.cfg = cfg
         
         # Set up paths
-        self.data_path = (Path(self.cfg.train.model_data))
+        self.data_path = (Path(self.cfg.paths.train.model_data_dir))
         log.info(f"Using dataset at {self.data_path}")
-        self.output_dir = Path(self.cfg.train.models_path)
+        self.output_dir = Path(self.cfg.paths.train.model_dir)
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create data.yaml

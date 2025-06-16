@@ -18,14 +18,14 @@ class PrepareDataset:
         # TODO: save dataset to a different location - causing issues with getting latest csv
         self.cfg = cfg
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
-        self.dataset_path = find_most_recent_dataset_path(self.cfg.database.dataset.output_path)
+        self.dataset_path = find_most_recent_dataset_path(self.cfg.paths.preprocess.csv_dir)
         self.data_csv = self.dataset_path / 'training_images.csv'
         self.class_mapping = self.cfg.cvat.class_mapping
 
         self.random_seed = self.cfg.train.random_seed
         self.validation_split = self.cfg.train.validation_split
 
-        self.train_data_path = Path(self.cfg.train.model_data)
+        self.train_data_path = Path(self.cfg.paths.train.model_data_dir)
         os.makedirs(self.train_data_path, exist_ok=True)
 
         # Parallel processing configuration
@@ -45,7 +45,7 @@ class PrepareDataset:
         image_id = row['image_id']
         
         # Find source image - assuming .jpg extension
-        source_image_path = Path(self.cfg.images.output_path) / f"{image_id}.jpg"
+        source_image_path = Path(self.cfg.paths.preprocess.image_dir) / f"{image_id}.jpg"
         
         # Destination paths for the image and label in Ultralytics format
         dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
