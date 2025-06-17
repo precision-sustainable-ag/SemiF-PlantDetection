@@ -43,16 +43,21 @@ class PrepareDataset:
         if self.parallel:
             log.info(f"Parallel processing enabled with {self.parallel_workers} workers")
 
+        self.remove_after_split = self.cfg.train.prepare_dataset.remove_after_split  # Flag to indicate that this is a prepare dataset run
+        
     def _cleanup_preprocess_dirs(self):
-        try:
-            if self.preprocess_images_path.exists():
-                shutil.rmtree(self.preprocess_images_path)
-                log.info(f"Deleted preprocess image directory: {self.preprocess_images_path}")
-            if self.preprocess_annotations_path.exists():
-                shutil.rmtree(self.preprocess_annotations_path)
-                log.info(f"Deleted preprocess annotations directory: {self.preprocess_annotations_path}")
-        except Exception as e:
-            log.warning(f"Failed to clean up preprocess directories: {e}")
+        if self.remove_after_split:
+            # Sanity check to make sure we don't delete important directories
+            forbidden_keywords = ['screberg', 'longterm_images2', 'GROW_DATA' ,'longterm_images', 'semifield-upload', 'semifield-developed-images', 'semifield-cutouts']
+            try:
+                if self.preprocess_images_path.exists() and any(keyword not in str(self.preprocess_images_path.stem) for keyword in forbidden_keywords):
+                    shutil.rmtree(self.preprocess_images_path)
+                    log.info(f"Deleted preprocess image directory: {self.preprocess_images_path}")
+                if self.preprocess_annotations_path.exists() and any(keyword not in str(self.preprocess_annotations_path.stem) for keyword in forbidden_keywords):
+                    shutil.rmtree(self.preprocess_annotations_path)
+                    log.info(f"Deleted preprocess annotations directory: {self.preprocess_annotations_path}")
+            except Exception as e:
+                log.warning(f"Failed to clean up preprocess directories: {e}")
 
     def process_image(self, row, type):
         """

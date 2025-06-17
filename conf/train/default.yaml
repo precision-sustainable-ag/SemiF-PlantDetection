@@ -20,3 +20,6 @@ parallel_workers: 16
 # patience: 50
 # lr: 0.001
 # weight_decay: 0.0005
+
+prepare_dataset:
+  remove_after_split: true # removes images and annotations after creating train/val/test splits
