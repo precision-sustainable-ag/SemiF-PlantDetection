@@ -2,7 +2,6 @@
 **.DS_Store
 **semifield-tool-datasets
 **plant-detection
-**data
 **outputs
 **__pycache__
 *.db

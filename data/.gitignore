@@ -1,0 +1,5 @@
+*
+!.gitignore
+!semifield-utils/
+!semifield-utils/species_information/
+!semifield-utils/species_information/species_info.json
