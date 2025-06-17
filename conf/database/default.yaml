@@ -1,8 +1,5 @@
 # Configuration for generating training dataset from SQLite database
 
-# Database settings
-db_path: ${paths.db_path} # This will be inherited from paths config
-
 # Training dataset settings
 dataset:
   # Number of images to include in the training dataset
@@ -27,10 +24,6 @@ dataset:
   # Minimum images per class (if available)
   # Currently only used for priority species (when getting min images)
   min_per_class: 0
-  
-  # Output path for dataset
-  # TODO: add a timestamp to the output path (like outputs)
-  output_path: ${paths.preprocess.csv_dir}
   
   # Random seed for reproducibility
   random_seed: 42 

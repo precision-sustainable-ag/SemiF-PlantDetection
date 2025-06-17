@@ -23,7 +23,7 @@ class ImageDownloader:
         Args:
             cfg (DictConfig): Hydra configuration
         """
-        self.dataset_path = Path(cfg.database.dataset.output_path)
+        self.dataset_path = Path(cfg.paths.preprocess.csv_dir)
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
         self.storage_bases = []
@@ -33,7 +33,7 @@ class ImageDownloader:
         log.info(f"Using LTS storage locations: {self.storage_bases}")
         
         # Local download folder
-        self.image_download_folder = Path(cfg.images.output_path)
+        self.image_download_folder = Path(cfg.paths.preprocess.image_dir)
         
         # Configuration for parallel processing
         self.max_workers = cfg.images.parallel_workers

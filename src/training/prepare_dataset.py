@@ -1,15 +1,21 @@
-from omegaconf import DictConfig
-from src.utils.utils import get_annotated_image_ids, find_most_recent_dataset_path, convert_bbox_to_yolo_format
-from pathlib import Path
-import pandas as pd
-import logging
 import os
-import shutil
-from sklearn.model_selection import train_test_split
-from datetime import datetime
-import json
 import cv2
+import json
+import shutil
+import logging
+import pandas as pd
+
+from pathlib import Path
+from datetime import datetime
 from multiprocessing import Pool, cpu_count
+from sklearn.model_selection import train_test_split
+from omegaconf import DictConfig
+
+from src.utils.utils import (
+    get_annotated_image_ids,
+    find_most_recent_dataset_path,
+    convert_bbox_to_yolo_format
+)
 
 log = logging.getLogger(__name__)
 
@@ -18,21 +24,40 @@ class PrepareDataset:
         # TODO: save dataset to a different location - causing issues with getting latest csv
         self.cfg = cfg
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
-        self.dataset_path = find_most_recent_dataset_path(self.cfg.database.dataset.output_path)
+        self.dataset_path = find_most_recent_dataset_path(self.cfg.paths.preprocess.csv_dir)
         self.data_csv = self.dataset_path / 'training_images.csv'
         self.class_mapping = self.cfg.cvat.class_mapping
 
         self.random_seed = self.cfg.train.random_seed
         self.validation_split = self.cfg.train.validation_split
 
-        self.train_data_path = Path(self.cfg.train.model_data)
+        self.train_data_path = Path(self.cfg.paths.train.model_data_dir)
         os.makedirs(self.train_data_path, exist_ok=True)
+
+        self.preprocess_images_path = Path(self.cfg.paths.preprocess.image_dir)
+        self.preprocess_annotations_path = Path(self.cfg.paths.preprocess.label_dir)
 
         # Parallel processing configuration
         self.parallel = self.cfg.train.get('parallel', False)
         self.parallel_workers = min(self.cfg.train.get('parallel_workers', cpu_count()), cpu_count())
         if self.parallel:
             log.info(f"Parallel processing enabled with {self.parallel_workers} workers")
+
+        self.remove_after_split = self.cfg.train.prepare_dataset.remove_after_split  # Flag to indicate that this is a prepare dataset run
+        
+    def _cleanup_preprocess_dirs(self):
+        if self.remove_after_split:
+            # Sanity check to make sure we don't delete important directories
+            forbidden_keywords = ['screberg', 'longterm_images2', 'GROW_DATA' ,'longterm_images', 'semifield-upload', 'semifield-developed-images', 'semifield-cutouts']
+            try:
+                if self.preprocess_images_path.exists() and any(keyword not in str(self.preprocess_images_path.stem) for keyword in forbidden_keywords):
+                    shutil.rmtree(self.preprocess_images_path)
+                    log.info(f"Deleted preprocess image directory: {self.preprocess_images_path}")
+                if self.preprocess_annotations_path.exists() and any(keyword not in str(self.preprocess_annotations_path.stem) for keyword in forbidden_keywords):
+                    shutil.rmtree(self.preprocess_annotations_path)
+                    log.info(f"Deleted preprocess annotations directory: {self.preprocess_annotations_path}")
+            except Exception as e:
+                log.warning(f"Failed to clean up preprocess directories: {e}")
 
     def process_image(self, row, type):
         """
@@ -45,19 +70,26 @@ class PrepareDataset:
         image_id = row['image_id']
         
         # Find source image - assuming .jpg extension
-        source_image_path = Path(self.cfg.images.output_path) / f"{image_id}.jpg"
-        
+        train_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
+        preprocess_image_path = Path(self.cfg.paths.preprocess.image_dir) / f"{image_id}.jpg"
+
         # Destination paths for the image and label in Ultralytics format
         dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
         dest_label_path = self.train_data_path / type / 'labels' / f"{image_id}.txt"
         
         # Copy image if it exists
-        if source_image_path.exists():
-            shutil.copy(source_image_path, dest_image_path)
+        if train_image_path.exists():
+            source_image_path = train_image_path
+        elif preprocess_image_path.exists():
+            source_image_path = preprocess_image_path
         else:
-            log.warning(f"Source image not found: {source_image_path}, will need to copy from LTS")
+            log.warning(f"Source image not found in train or preprocess: {image_id}, will need to copy from LTS")
             # TODO: try to get it from LTS if not exists
             return
+        
+        # Only copy if source and destination are different paths
+        if source_image_path.resolve() != dest_image_path.resolve():
+            shutil.copy(source_image_path, dest_image_path)
         
         if image_id in self.human_annotations.keys():
             shutil.copy(self.human_annotations[image_id], dest_label_path)
@@ -184,6 +216,7 @@ class PrepareDataset:
         log.info(f"Found {len(self.human_annotations)} human annotations")
         df = self.identify_training_data()
         self.structure_data(df)
+        self._cleanup_preprocess_dirs()
         return self.train_data_path
 
 def main(cfg: DictConfig):

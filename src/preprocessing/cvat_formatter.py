@@ -35,15 +35,15 @@ class CVATFormatter:
         Args:
             cfg (DictConfig): Hydra configuration
         """
-        self.dataset_path = Path(cfg.database.dataset.output_path)
+        self.dataset_path = Path(cfg.paths.preprocess.csv_dir)
         
         self.csv_file_path = Path(self.dataset_path, "training_images.csv")
         
         # Image source directory
-        self.image_source_folder = Path(cfg.images.output_path)
+        self.image_source_folder = Path(cfg.paths.preprocess.image_dir)
         
         # CVAT output directory
-        self.cvat_output_folder = Path(cfg.cvat.output_path)
+        self.cvat_output_folder = Path(cfg.paths.preprocess.cvat_output)
         
         # Create CVAT output directory structure
         self.images_dir = self.cvat_output_folder / "images" / "train"

@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 class CVATImporter:
     def __init__(self, cfg: DictConfig) -> None:
         self.cfg = cfg
-        self.cvat_secrets = read_secrets(cfg.secrets_path)['cvat']
+        self.cvat_secrets = read_secrets(cfg.paths.secrets)['cvat']
         self.cvat_dataset_format = cfg.cvat.dataset_format
         self.project_name = self.cfg.project.name
         self.task_name = self.cfg.project.task_name
