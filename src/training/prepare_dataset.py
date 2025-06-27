@@ -47,15 +47,32 @@ class PrepareDataset:
         
     def _cleanup_preprocess_dirs(self):
         if self.remove_after_split:
-            # Sanity check to make sure we don't delete important directories
-            forbidden_keywords = ['screberg', 'longterm_images2', 'GROW_DATA' ,'longterm_images', 'semifield-upload', 'semifield-developed-images', 'semifield-cutouts']
+            # Sanity check to avoid accidental deletion of important directories
+            forbidden_keywords = [
+                'screberg', 'longterm_images2', 'GROW_DATA',
+                'longterm_images', 'semifield-upload',
+                'semifield-developed-images', 'semifield-cutouts'
+            ]
+
             try:
-                if self.preprocess_images_path.exists() and any(keyword not in str(self.preprocess_images_path.stem) for keyword in forbidden_keywords):
-                    shutil.rmtree(self.preprocess_images_path)
-                    log.info(f"Deleted preprocess image directory: {self.preprocess_images_path}")
-                if self.preprocess_annotations_path.exists() and any(keyword not in str(self.preprocess_annotations_path.stem) for keyword in forbidden_keywords):
-                    shutil.rmtree(self.preprocess_annotations_path)
-                    log.info(f"Deleted preprocess annotations directory: {self.preprocess_annotations_path}")
+                image_path = self.preprocess_images_path
+                annotations_path = self.preprocess_annotations_path
+
+                # Check if both exist
+                if image_path.exists() and annotations_path.exists():
+                    # Check if both are safe to delete
+                    if (
+                        all(keyword not in image_path.stem for keyword in forbidden_keywords) and
+                        all(keyword not in annotations_path.stem for keyword in forbidden_keywords)
+                    ):
+                        shutil.rmtree(image_path)
+                        log.info(f"Deleted preprocess image directory: {image_path}")
+                        shutil.rmtree(annotations_path)
+                        log.info(f"Deleted preprocess annotations directory: {annotations_path}")
+                    else:
+                        log.warning("Skipping deletion due to forbidden keyword match in directory names.")
+                else:
+                    log.info("Skipping cleanup: One or both preprocess directories do not exist.")
             except Exception as e:
                 log.warning(f"Failed to clean up preprocess directories: {e}")
 

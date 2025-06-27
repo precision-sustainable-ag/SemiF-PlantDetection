@@ -34,4 +34,5 @@ lts_locations:
   - /mnt/research-projects/s/screberg/GROW_DATA
   - /mnt/research-projects/s/screberg/longterm_images2
 
-lts_human_annotations: /mnt/research-projects/s/screberg/longterm_images2/semifield-database/plant-detection/annotations/
+# lts_human_annotations: /mnt/research-projects/s/screberg/longterm_images2/semifield-database/plant-detection/annotations/
+lts_human_annotations: ${paths.root_dir}/temp_lts_human_annotations

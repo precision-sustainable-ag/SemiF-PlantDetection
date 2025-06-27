@@ -1,11 +1,13 @@
 from omegaconf import DictConfig
 import logging
 from src.exporting.cvat_exporter import main as cvat_exporter_main
+from src.exporting.rebuild_dataset import main as rebuild_dataset_main
 
 log = logging.getLogger(__name__)
 
 TASK_REGISTRY = {
     "cvat_exporter": cvat_exporter_main,
+    "rebuild_dataset": rebuild_dataset_main,
 }
 
 def main(cfg: DictConfig):
