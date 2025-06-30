@@ -108,6 +108,11 @@ class RebuildDataset:
                 return
 
             df = self.query_image_metadata(image_ids)
+
+            # Check whether the size of the DataFrame is the same as the number of image IDs
+            if df.shape[0] != len(image_ids):
+                log.warning(f"Mismatch: {len(image_ids)} image IDs but {df.shape[0]} records in DB. Rebuilding dataset...")
+            
             df = self.process_metadata(df)
             self.save_training_csv(df)
 
