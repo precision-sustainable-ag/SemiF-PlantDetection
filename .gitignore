@@ -8,4 +8,7 @@
 **.pt
 projects/
 
+# Temporary directory for testing
+temp_lts_human_annotations/
+
 secrets/*.yaml
