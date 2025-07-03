@@ -1,12 +1,12 @@
-from omegaconf import DictConfig
 import logging
 import os
 from pathlib import Path
-import yaml
-from datetime import datetime
+
 import torch
+import yaml
+from omegaconf import DictConfig
 from ultralytics import YOLO
-from ..utils.utils import find_most_recent_dataset_path
+
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,23 @@ class TrainModel:
         
         # Create data.yaml
         self.create_data_yaml()
+
+    def get_latest_checkpoint(self):
+        """
+        Finds the most recent best.pt checkpoint under paths.train.model_dir
+        """
+        runs = sorted(
+            self.output_dir.glob("run*"),
+            key=os.path.getmtime,
+            reverse=True
+        )
+        for run in runs:
+            best_ckpt = run / "weights" / "best.pt"
+            if best_ckpt.exists():
+                log.info(f"Found latest checkpoint: {best_ckpt}")
+                return best_ckpt
+        log.warning("No checkpoint found in model_dir")
+        return None
         
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
@@ -36,11 +53,10 @@ class TrainModel:
             'path': str(self.data_path),
             'train': 'train/images',
             'val': 'val/images',
-            'nc': 3,  # Number of classes
+            'nc': 2,  # Number of classes
             'names': {
                 0: 'plant',
-                1: 'non_target',
-                2: 'colorchecker'
+                1: 'colorchecker'
             }
         }
         
@@ -55,8 +71,22 @@ class TrainModel:
         """Train the YOLOv11 model"""
         log.info("Starting YOLOv11 training")
         
-        # Load a pretrained YOLO model
-        model = YOLO(self.cfg.train.model_name)
+        if self.cfg.train.train_from_checkpoint:
+            if self.cfg.paths.train.checkpoint:
+                checkpoint = self.cfg.paths.train.checkpoint
+                log.info(f"Resuming from specified checkpoint: {checkpoint}")
+            else:
+                checkpoint = self.get_latest_checkpoint()
+                if checkpoint:
+                    log.info(f"Resuming from latest checkpoint: {checkpoint}")
+                else:
+                    checkpoint = self.cfg.train.model_name
+                    log.info(f"No checkpoint found — starting from model_name: {checkpoint}")
+        else:
+            checkpoint = self.cfg.train.model_name
+            log.info(f"Starting fresh from model_name: {checkpoint}")
+
+        model = YOLO(checkpoint)
         
         # Train the model
         results = model.train(

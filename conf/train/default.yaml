@@ -22,4 +22,6 @@ parallel_workers: 16
 # weight_decay: 0.0005
 
 prepare_dataset:
-  remove_after_split: true # removes images and annotations after creating train/val/test splits
+  remove_after_split: false # removes images and annotations after creating train/val/test splits
+
+train_from_checkpoint: true
