@@ -28,9 +28,5 @@ cvat:
   resize_factor: 0.75
   parallel: true
   parallel_workers: 16
-  class_mapping:
-    plant: 0
-    non_target: 1
-    color_checker: 2
   dataset_format: "Ultralytics YOLO Detection 1.0"
 
