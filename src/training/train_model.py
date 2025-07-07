@@ -49,15 +49,24 @@ class TrainModel:
         
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
+        if self.cfg.ignore_non_targets:
+            names = {
+                0: 'plant',
+                1: 'colorchecker'
+            }
+        else:
+            names = {
+                0: 'plant',
+                1: 'non_target',
+                2: 'colorchecker'
+            }
+
         data = {
             'path': str(self.data_path),
             'train': 'train/images',
             'val': 'val/images',
-            'nc': 2,  # Number of classes
-            'names': {
-                0: 'plant',
-                1: 'colorchecker'
-            }
+            'nc': len(names),
+            'names': names
         }
         
         yaml_path = self.data_path / 'data.yaml'

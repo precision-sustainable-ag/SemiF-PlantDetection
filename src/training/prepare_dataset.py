@@ -10,6 +10,7 @@ from multiprocessing import Pool, cpu_count
 from sklearn.model_selection import train_test_split
 from omegaconf import DictConfig
 
+from src.utils.constants import CLASS_MAPPING
 from src.utils.utils import (
     get_annotated_image_ids,
     find_most_recent_dataset_path,
@@ -25,7 +26,7 @@ class PrepareDataset:
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
         self.dataset_path = find_most_recent_dataset_path(self.cfg.paths.preprocess.csv_dir)
         self.data_csv = self.dataset_path / 'training_images.csv'
-        self.class_mapping = self.cfg.cvat.class_mapping
+        self.class_mapping = CLASS_MAPPING
 
         self.random_seed = self.cfg.train.random_seed
         self.validation_split = self.cfg.train.validation_split
@@ -41,6 +42,11 @@ class PrepareDataset:
         self.parallel_workers = min(self.cfg.train.get('parallel_workers', cpu_count()), cpu_count())
         if self.parallel:
             log.info(f"Parallel processing enabled with {self.parallel_workers} workers")
+
+        if self.cfg.train.prepare_dataset.ignore_non_targets:
+            log.info("Preparing training dataset: manual annotations will be filtered to ignore non_target labels.")
+        else:
+            log.info("Preparing training dataset: manual annotations will include all labels, including non_target.")
 
         self.remove_after_split = self.cfg.train.prepare_dataset.remove_after_split  # Flag to indicate that this is a prepare dataset run
         
@@ -145,8 +151,12 @@ class PrepareDataset:
         if source_image_path.resolve() != dest_image_path.resolve():
             shutil.copy(source_image_path, dest_image_path)
         
-        if image_id in self.human_annotations.keys():
-            self.copy_and_filter_manual_annotation(self.human_annotations[image_id], dest_label_path, image_id)
+        if image_id in self.human_annotations:
+            src = self.human_annotations[image_id]
+            if self.cfg.train.prepare_dataset.ignore_non_targets:
+                self.copy_and_filter_manual_annotation(src, dest_label_path, image_id)
+            else:
+                shutil.copy(src, dest_label_path)
         else:
             log.warning(f'Manual annotation not found for {image_id}')
             # Only read image if annotations need to be normalized

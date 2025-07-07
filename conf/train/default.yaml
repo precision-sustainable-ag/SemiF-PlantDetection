@@ -23,5 +23,6 @@ parallel_workers: 16
 
 prepare_dataset:
   remove_after_split: false # removes images and annotations after creating train/val/test splits
-
+  ignore_non_targets: true # filters annotations to ignore non-targets
+ 
 train_from_checkpoint: true
