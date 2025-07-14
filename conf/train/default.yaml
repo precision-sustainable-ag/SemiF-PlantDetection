@@ -13,6 +13,7 @@ batch_size: 1
 
 random_seed: 42
 validation_split: 0.2
+test_split: 0.1
 parallel: true
 parallel_workers: 16
 

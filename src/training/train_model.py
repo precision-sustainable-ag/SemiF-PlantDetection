@@ -6,7 +6,9 @@ import yaml
 from datetime import datetime
 import torch
 from ultralytics import YOLO
-from ..utils.utils import find_most_recent_dataset_path
+from src.utils.utils import get_latest_checkpoint
+from src.utils.constants import CLASS_MAPPING
+
 
 log = logging.getLogger(__name__)
 
@@ -32,16 +34,25 @@ class TrainModel:
         
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
+        if self.cfg.train.prepare_dataset.ignore_non_targets:
+            # exclude non_target
+            filtered_mapping = {
+                k: v for k, v in CLASS_MAPPING.items() if k != "non_target"
+            }
+        else:
+            filtered_mapping = CLASS_MAPPING
+
+        # Invert to get index → name
+        names_list = sorted(filtered_mapping.items(), key=lambda x: x[1])
+        names = {i: name for i, (name, _) in enumerate(names_list)}
+
         data = {
             'path': str(self.data_path),
             'train': 'train/images',
             'val': 'val/images',
-            'nc': 3,  # Number of classes
-            'names': {
-                0: 'plant',
-                1: 'non_target',
-                2: 'colorchecker'
-            }
+            'test': 'test/images',
+            'nc': len(names),
+            'names': names
         }
         
         yaml_path = self.data_path / 'data.yaml'

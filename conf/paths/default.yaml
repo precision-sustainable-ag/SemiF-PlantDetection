@@ -22,6 +22,12 @@ preprocess:
 train:
   model_dir: ${paths.project_dir}/train/models
   model_data_dir: ${paths.project_dir}/train/data
+  checkpoint: "/home/ajajoo3/SemiF-PlantDetection/projects/Plant detection 2025-05-08 (14-51)/train/train/models/train22/weights/last.pt"
+
+# evaluation output paths
+evaluate:
+  data_yaml: ${paths.train.model_data_dir}/data.yaml
+  save_dir: ${paths.project_dir}/evaluate
 
 # path to database
 db_path: ${paths.data_dir}/db/agir.db

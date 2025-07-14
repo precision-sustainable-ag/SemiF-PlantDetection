@@ -198,10 +198,22 @@ class PrepareDataset:
             if image_id not in self.human_annotations.keys():
                 log.warning(f"{image_id} - annotations not verified")
         
-        # Split into train and validation sets
+        all_ids = df['image_id'].tolist()
+        test_fraction = self.cfg.train.get("test_split", 0.0)
+        val_fraction = self.cfg.train.get("validation_split", 0.2)
+        
+        # split into train+val and test
+        train_val_ids, test_ids = train_test_split(
+            all_ids,
+            test_size=test_fraction,
+            random_state=self.random_seed,
+            shuffle=True
+        )
+
+        # split train_val into train and val
         train_ids, val_ids = train_test_split(
-            df['image_id'].tolist(),
-            test_size=self.validation_split,
+            train_val_ids,
+            test_size=val_fraction / (1 - test_fraction),  # adjust proportion
             random_state=self.random_seed,
             shuffle=True
         )
@@ -210,11 +222,12 @@ class PrepareDataset:
         df['split'] = 'unused'
         df.loc[df['image_id'].isin(train_ids), 'split'] = 'train'
         df.loc[df['image_id'].isin(val_ids), 'split'] = 'val'
+        df.loc[df['image_id'].isin(test_ids), 'split'] = 'test'
         
         # Save updated dataframe (also include timestamp to indicate data subset used)
         output_path = self.train_data_path / f'train_images_{str(self.data_csv.parent.name)}_{str(self.data_csv.name)}.csv'
         df.to_csv(output_path, index=False)
-        log.info(f"Split dataset into {len(train_ids)} training and {len(val_ids)} validation images")
+        log.info(f"Split dataset into {len(train_ids)} train, {len(val_ids)} val, {len(test_ids)} test images")
         return df
 
     def structure_data(self, df):
@@ -226,8 +239,10 @@ class PrepareDataset:
         """
         train_df = df.loc[df['split'] == 'train']
         val_df = df.loc[df['split'] == 'val']
+        test_df = df.loc[df['split'] == 'test']
         self.prepare_from_df(train_df, 'train')
         self.prepare_from_df(val_df, 'val')
+        self.prepare_from_df(test_df, 'test')
    
     def run(self):
         log.info(f"Found {len(self.human_annotations)} human annotations")
