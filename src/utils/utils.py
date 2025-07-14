@@ -48,6 +48,23 @@ def find_most_recent_dataset_path(base_dataset_path):
     
     return dataset_path
 
+def get_latest_checkpoint(model_dir: Path) -> Path | None:
+    """
+    Finds the most recent `best.pt` checkpoint under model_dir/run*/
+    """
+    runs = sorted(
+        [d for d in model_dir.glob("run*") if d.is_dir()],
+        key=lambda d: d.stat().st_mtime,
+        reverse=True
+    )
+    for run in runs:
+        best_ckpt = run / "weights" / "best.pt"
+        if best_ckpt.exists():
+            log.info(f"Found latest checkpoint: {best_ckpt}")
+            return best_ckpt
+    log.warning(f"No checkpoint found in {model_dir}")
+    return None
+
 def get_annotated_image_ids(lts_locations):
     """
     Get all annotated image ids from a base path.

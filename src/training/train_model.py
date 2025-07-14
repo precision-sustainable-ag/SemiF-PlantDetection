@@ -6,6 +6,7 @@ import torch
 import yaml
 from omegaconf import DictConfig
 from ultralytics import YOLO
+from src.utils.utils import get_latest_checkpoint
 
 
 log = logging.getLogger(__name__)
@@ -29,27 +30,10 @@ class TrainModel:
         
         # Create data.yaml
         self.create_data_yaml()
-
-    def get_latest_checkpoint(self):
-        """
-        Finds the most recent best.pt checkpoint under paths.train.model_dir
-        """
-        runs = sorted(
-            self.output_dir.glob("run*"),
-            key=os.path.getmtime,
-            reverse=True
-        )
-        for run in runs:
-            best_ckpt = run / "weights" / "best.pt"
-            if best_ckpt.exists():
-                log.info(f"Found latest checkpoint: {best_ckpt}")
-                return best_ckpt
-        log.warning("No checkpoint found in model_dir")
-        return None
         
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
-        if self.cfg.ignore_non_targets:
+        if self.cfg.train.prepare_dataset.ignore_non_targets:
             names = {
                 0: 'plant',
                 1: 'colorchecker'
@@ -85,7 +69,7 @@ class TrainModel:
                 checkpoint = self.cfg.paths.train.checkpoint
                 log.info(f"Resuming from specified checkpoint: {checkpoint}")
             else:
-                checkpoint = self.get_latest_checkpoint()
+                checkpoint = get_latest_checkpoint(self.output_dir)
                 if checkpoint:
                     log.info(f"Resuming from latest checkpoint: {checkpoint}")
                 else:

@@ -49,6 +49,7 @@ class PrepareDataset:
             log.info("Preparing training dataset: manual annotations will include all labels, including non_target.")
 
         self.remove_after_split = self.cfg.train.prepare_dataset.remove_after_split  # Flag to indicate that this is a prepare dataset run
+        self.ignore_non_targets = self.cfg.train.prepare_dataset.ignore_non_targets
         
     def _cleanup_preprocess_dirs(self):
         if self.remove_after_split:
@@ -82,8 +83,8 @@ class PrepareDataset:
                 log.warning(f"Failed to clean up preprocess directories: {e}")
 
     def copy_and_filter_manual_annotation(self, src_path, dest_path, image_id):
-        non_target_id = int(self.cfg.cvat.class_mapping.non_target)
-        colorchecker_id = int(self.cfg.cvat.class_mapping.color_checker)
+        non_target_id = int(self.class_mapping["non_target"])
+        colorchecker_id = int(self.class_mapping["color_checker"])
 
         with open(src_path, 'r') as src, open(dest_path, 'w') as dest:
             for line in src:
@@ -113,11 +114,11 @@ class PrepareDataset:
             if annotation.get('non_target_weed_pred_conf', 0) > 0.99:
                 return None  # ignore non_target
             else:
-                return int(self.cfg.cvat.class_mapping.plant)
+                return int(self.class_mapping["plant"])
         elif annotation.get('category_class_id') == 28:
-            return int(self.cfg.cvat.class_mapping.color_checker)
+            return int(self.class_mapping["color_checker"])
         else:
-            return int(self.cfg.cvat.class_mapping.plant)
+            return int(self.class_mapping["plant"])
 
     def process_image(self, row, type):
         """
@@ -153,7 +154,7 @@ class PrepareDataset:
         
         if image_id in self.human_annotations:
             src = self.human_annotations[image_id]
-            if self.cfg.train.prepare_dataset.ignore_non_targets:
+            if self.ignore_non_targets:
                 self.copy_and_filter_manual_annotation(src, dest_label_path, image_id)
             else:
                 shutil.copy(src, dest_label_path)
@@ -175,7 +176,7 @@ class PrepareDataset:
                             if not bbox:
                                 continue
                             
-                            mapped_class_id = self.map_class_ignore_non_target(annotation)
+                            mapped_class_id = self.map_class_ids(annotation)
 
                             if mapped_class_id is None:
                                 log.debug(f"Skipping non_target annotation for image {image_id}")
