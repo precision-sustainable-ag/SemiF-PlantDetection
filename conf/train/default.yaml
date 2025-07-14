@@ -3,13 +3,11 @@ tasks:
   - train_model
 
 model_name: yolo11n.pt
-epochs: 5
-image_size: 640
-batch_size: 1
-# num_workers: 10
-# patience:
-# lr:
-# weight_decay:
+epochs: 400
+image_size: 2880
+batch_size: 16
+num_workers: 64
+device: "0,1,2,3"
 
 random_seed: 42
 validation_split: 0.2

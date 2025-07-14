@@ -88,8 +88,7 @@ class TrainModel:
             imgsz=self.cfg.train.image_size,
             batch=self.cfg.train.batch_size,
             # workers=self.cfg.train.num_workers,
-            # TODO: change device id (s) to be in config to use different gpu(s)
-            device=0 if torch.cuda.is_available() else 'cpu',
+            device=self.cfg.train.device if torch.cuda.is_available() else 'cpu',
             # device='cpu',
             project=str(self.output_dir),
             name='run',
@@ -97,11 +96,17 @@ class TrainModel:
             # patience=self.cfg.train.patience,
             # lr0=self.cfg.train.lr,
             # weight_decay=self.cfg.train.weight_decay
+            flipud=0.5,
+            fliplr=0.5,
+            mosaic=0,
+            scale=0.2,
+            shear=0,
+            degrees=0,
+            perspective=0
         )
         
         # Save the model
         model.export()
-        log.info(f"Model trained and saved to {results.save_dir}")
         
         return results
         
