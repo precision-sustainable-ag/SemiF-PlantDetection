@@ -13,7 +13,7 @@ mode: train
 
 # used to reference project and task in CVAT
 project:
-  name: Plant detection 2025-05-08 (14-51)
+  name: anuraag_new_test_3
   task_name: train
 
 # used mainly in download_images
