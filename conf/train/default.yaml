@@ -3,21 +3,16 @@ tasks:
   - train_model
 
 model_name: yolo11n.pt
-epochs: 400
-image_size: 2880
-batch_size: 16
-num_workers: 64
-device: "0,1,2,3"
+epochs: 3
+image_size: 512
+batch_size: 4
+num_workers: 18
+device: "1" # TODO: implement GPUtils for automatic selection of GPUs
 
 random_seed: 42
 validation_split: 0.2
 parallel: true
 parallel_workers: 16
-
-# Model hyperparameters
-# patience: 50
-# lr: 0.001
-# weight_decay: 0.0005
 
 prepare_dataset:
   remove_after_split: false # removes images and annotations after creating train/val/test splits
