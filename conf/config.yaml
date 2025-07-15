@@ -14,8 +14,8 @@ mode: preprocess
 
 # used to reference project and task in CVAT
 project:
-  name: anuraag_test_3
-  task_name: custom_task
+  name: anuraag_new_test_3
+  task_name: train
 
 # used mainly in download_images
 images:
