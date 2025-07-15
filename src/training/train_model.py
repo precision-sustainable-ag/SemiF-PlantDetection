@@ -1,12 +1,13 @@
-from omegaconf import DictConfig
 import logging
 import os
 from pathlib import Path
-import yaml
-from datetime import datetime
+
 import torch
+import yaml
+from omegaconf import DictConfig
 from ultralytics import YOLO
-from ..utils.utils import find_most_recent_dataset_path
+from src.utils.utils import get_latest_checkpoint
+
 
 log = logging.getLogger(__name__)
 
@@ -32,16 +33,24 @@ class TrainModel:
         
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
-        data = {
-            'path': str(self.data_path),
-            'train': 'train/images',
-            'val': 'val/images',
-            'nc': 3,  # Number of classes
-            'names': {
+        if self.cfg.train.prepare_dataset.ignore_non_targets:
+            names = {
+                0: 'plant',
+                1: 'colorchecker'
+            }
+        else:
+            names = {
                 0: 'plant',
                 1: 'non_target',
                 2: 'colorchecker'
             }
+
+        data = {
+            'path': str(self.data_path),
+            'train': 'train/images',
+            'val': 'val/images',
+            'nc': len(names),
+            'names': names
         }
         
         yaml_path = self.data_path / 'data.yaml'
@@ -55,8 +64,22 @@ class TrainModel:
         """Train the YOLOv11 model"""
         log.info("Starting YOLOv11 training")
         
-        # Load a pretrained YOLO model
-        model = YOLO(self.cfg.train.model_name)
+        if self.cfg.train.train_from_checkpoint:
+            if self.cfg.paths.train.checkpoint:
+                checkpoint = self.cfg.paths.train.checkpoint
+                log.info(f"Resuming from specified checkpoint: {checkpoint}")
+            else:
+                checkpoint = get_latest_checkpoint(self.output_dir)
+                if checkpoint:
+                    log.info(f"Resuming from latest checkpoint: {checkpoint}")
+                else:
+                    checkpoint = self.cfg.train.model_name
+                    log.info(f"No checkpoint found — starting from model_name: {checkpoint}")
+        else:
+            checkpoint = self.cfg.train.model_name
+            log.info(f"Starting fresh from model_name: {checkpoint}")
+
+        model = YOLO(checkpoint)
         
         # Train the model
         results = model.train(
@@ -65,8 +88,7 @@ class TrainModel:
             imgsz=self.cfg.train.image_size,
             batch=self.cfg.train.batch_size,
             # workers=self.cfg.train.num_workers,
-            # TODO: change device id (s) to be in config to use different gpu(s)
-            device=0 if torch.cuda.is_available() else 'cpu',
+            device=self.cfg.train.device if torch.cuda.is_available() else 'cpu',
             # device='cpu',
             project=str(self.output_dir),
             name='run',
@@ -74,11 +96,17 @@ class TrainModel:
             # patience=self.cfg.train.patience,
             # lr0=self.cfg.train.lr,
             # weight_decay=self.cfg.train.weight_decay
+            flipud=0.5,
+            fliplr=0.5,
+            mosaic=0,
+            scale=0.2,
+            shear=0,
+            degrees=0,
+            perspective=0
         )
         
         # Save the model
         model.export()
-        log.info(f"Model trained and saved to {results.save_dir}")
         
         return results
         

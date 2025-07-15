@@ -9,12 +9,12 @@ defaults:
 # each mode is a pipeline mode
 # preprocess/train/export
 # list of tasks available in mode specific config
-mode: preprocess
+mode: train
 
 # used to reference project and task in CVAT
 project:
-  name: anuraag_test_3
-  task_name: custom_task
+  name: anuraag_new_test_3
+  task_name: train
 
 # used mainly in download_images
 images:
@@ -28,9 +28,5 @@ cvat:
   resize_factor: 0.75
   parallel: true
   parallel_workers: 16
-  class_mapping:
-    plant: 0
-    non_target: 1
-    color_checker: 2
   dataset_format: "Ultralytics YOLO Detection 1.0"
 
