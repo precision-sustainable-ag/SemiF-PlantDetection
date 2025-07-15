@@ -171,13 +171,13 @@ class CVATFormatter:
                 # Apply class mapping from config
                 if annotation.get('non_target_weed') is True:
                     if annotation.get('non_target_weed_pred_conf') > 0.99:
-                        mapped_class_id = int(self.class_mapping.non_target)
+                        mapped_class_id = int(self.class_mapping["non_target"])
                     else:
-                        mapped_class_id = int(self.class_mapping.plant)
+                        mapped_class_id = int(self.class_mapping["plant"])
                 elif annotation.get('category_class_id') == 28:
-                    mapped_class_id = int(self.class_mapping.color_checker)
+                    mapped_class_id = int(self.class_mapping["color_checker"])
                 else:
-                    mapped_class_id = int(self.class_mapping.plant)
+                    mapped_class_id = int(self.class_mapping["plant"])
                 
                 center_x, center_y, norm_width, norm_height = convert_bbox_to_yolo_format(
                     scaled_bbox, new_width, new_height
