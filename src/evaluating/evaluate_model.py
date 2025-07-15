@@ -35,22 +35,44 @@ class EvaluateModel:
 
     def _resolve_checkpoint(self) -> Path | None:
         """
-        Decides which checkpoint to use:
-        - if cfg.paths.train.checkpoint is set → use it if exists
-        - else → fallback to latest checkpoint
+        Resolves which checkpoint to use for evaluation:
+        Priority:
+        1. cfg.evaluate.custom_path (if set & exists)
+        2. cfg.evaluate.run_version (if set & exists)
+        3. Latest checkpoint in model_dir
         """
-        ckpt = self.cfg.paths.train.checkpoint
-        if ckpt:
-            ckpt = Path(ckpt)
-            if ckpt.exists():
-                log.info(f"Using specified checkpoint: {ckpt}")
-                return ckpt
+        # custom path
+        custom_ckpt = getattr(self.cfg.evaluate, "custom_path", None)
+        if custom_ckpt:
+            custom_ckpt = Path(custom_ckpt)
+            if custom_ckpt.exists():
+                log.info(f"Using custom evaluation checkpoint: {custom_ckpt}")
+                return custom_ckpt
             else:
-                log.warning(f"Specified checkpoint does not exist: {ckpt}")
+                raise FileNotFoundError(f"Custom evaluation checkpoint does not exist: {custom_ckpt}")
+
+        # run version
+        run_version = getattr(self.cfg.evaluate, "run_version", None)
+        if run_version is not None:
+            if run_version in [0, 1]:
+                run_dir = self.model_dir / "run"
+            else:
+                run_dir = self.model_dir / f"run{run_version}"
+
+            ckpt_path = run_dir / "weights" / "best.pt"
+            if ckpt_path.exists():
+                log.info(f"Using checkpoint from run_version={run_version}: {ckpt_path}")
+                return ckpt_path
+            else:
+                raise FileNotFoundError(f"Checkpoint for run_version={run_version} does not exist at: {ckpt_path}")
+
+        # latest available
         latest = get_latest_checkpoint(self.model_dir)
         if latest:
-            log.info(f"Using latest checkpoint: {latest}")
+            log.info(f"Using latest available checkpoint: {latest}")
             return latest
+
+        # None found
         return None
 
     def evaluate(self):

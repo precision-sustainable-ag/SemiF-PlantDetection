@@ -71,12 +71,11 @@ class TrainModel:
                 checkpoint = self.cfg.paths.train.checkpoint
                 log.info(f"Resuming from specified checkpoint: {checkpoint}")
             else:
-                checkpoint = get_latest_checkpoint(self.output_dir)
-                if checkpoint:
-                    log.info(f"Resuming from latest checkpoint: {checkpoint}")
-                else:
-                    checkpoint = self.cfg.train.model_name
-                    log.info(f"No checkpoint found — starting from model_name: {checkpoint}")
+                log.error("train_from_checkpoint is True but no checkpoint was provided.")
+                raise FileNotFoundError(
+                    "No checkpoint specified in cfg.paths.train.checkpoint while train_from_checkpoint=True. "
+                    "Please specify a checkpoint path or set train_from_checkpoint to False."
+                )
         else:
             checkpoint = self.cfg.train.model_name
             log.info(f"Starting fresh from model_name: {checkpoint}")

@@ -22,7 +22,7 @@ preprocess:
 train:
   model_dir: ${paths.project_dir}/train/models
   model_data_dir: ${paths.project_dir}/train/data
-  checkpoint: "/home/ajajoo3/SemiF-PlantDetection/projects/Plant detection 2025-05-08 (14-51)/train/train/models/train22/weights/last.pt"
+  checkpoint: 
 
 # evaluation output paths
 evaluate:
