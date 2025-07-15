@@ -6,11 +6,11 @@ import logging
 import pandas as pd
 
 from pathlib import Path
-from datetime import datetime
 from multiprocessing import Pool, cpu_count
 from sklearn.model_selection import train_test_split
 from omegaconf import DictConfig
 
+from src.utils.constants import CLASS_MAPPING
 from src.utils.utils import (
     get_annotated_image_ids,
     find_most_recent_dataset_path,
@@ -26,7 +26,7 @@ class PrepareDataset:
         self.human_annotations = get_annotated_image_ids(self.cfg.paths.lts_human_annotations)
         self.dataset_path = find_most_recent_dataset_path(self.cfg.paths.preprocess.csv_dir)
         self.data_csv = self.dataset_path / 'training_images.csv'
-        self.class_mapping = self.cfg.cvat.class_mapping
+        self.class_mapping = CLASS_MAPPING
 
         self.random_seed = self.cfg.train.random_seed
         self.validation_split = self.cfg.train.validation_split
@@ -43,7 +43,13 @@ class PrepareDataset:
         if self.parallel:
             log.info(f"Parallel processing enabled with {self.parallel_workers} workers")
 
+        if self.cfg.train.prepare_dataset.ignore_non_targets:
+            log.info("Preparing training dataset: manual annotations will be filtered to ignore non_target labels.")
+        else:
+            log.info("Preparing training dataset: manual annotations will include all labels, including non_target.")
+
         self.remove_after_split = self.cfg.train.prepare_dataset.remove_after_split  # Flag to indicate that this is a prepare dataset run
+        self.ignore_non_targets = self.cfg.train.prepare_dataset.ignore_non_targets
         
     def _cleanup_preprocess_dirs(self):
         if self.remove_after_split:
@@ -75,6 +81,44 @@ class PrepareDataset:
                     log.info("Skipping cleanup: One or both preprocess directories do not exist.")
             except Exception as e:
                 log.warning(f"Failed to clean up preprocess directories: {e}")
+
+    def copy_and_filter_manual_annotation(self, src_path, dest_path, image_id):
+        non_target_id = int(self.class_mapping["non_target"])
+        colorchecker_id = int(self.class_mapping["color_checker"])
+
+        with open(src_path, 'r') as src, open(dest_path, 'w') as dest:
+            for line in src:
+                if not line.strip():
+                    continue
+                parts = line.strip().split()
+                class_id = int(parts[0])
+                
+                if class_id == non_target_id:
+                    log.debug(f"Skipping non_target in manual annotation for {image_id}")
+                    continue
+                
+                # remap colorchecker from original to 1
+                if class_id == colorchecker_id:
+                    mapped_id = 1
+                else:  # plant stays 0
+                    mapped_id = 0
+                
+                parts[0] = str(mapped_id)
+                dest.write(" ".join(parts) + "\n")
+    
+    def map_class_ids(self, annotation):
+        """
+        Maps annotation to YOLO class id or None if it should be ignored.
+        """
+        if annotation.get('non_target_weed') is True:
+            if annotation.get('non_target_weed_pred_conf', 0) > 0.99:
+                return None  # ignore non_target
+            else:
+                return int(self.class_mapping["plant"])
+        elif annotation.get('category_class_id') == 28:
+            return int(self.class_mapping["color_checker"])
+        else:
+            return int(self.class_mapping["plant"])
 
     def process_image(self, row, type):
         """
@@ -108,8 +152,12 @@ class PrepareDataset:
         if source_image_path.resolve() != dest_image_path.resolve():
             shutil.copy(source_image_path, dest_image_path)
         
-        if image_id in self.human_annotations.keys():
-            shutil.copy(self.human_annotations[image_id], dest_label_path)
+        if image_id in self.human_annotations:
+            src = self.human_annotations[image_id]
+            if self.ignore_non_targets:
+                self.copy_and_filter_manual_annotation(src, dest_label_path, image_id)
+            else:
+                shutil.copy(src, dest_label_path)
         else:
             log.warning(f'Manual annotation not found for {image_id}')
             # Only read image if annotations need to be normalized
@@ -128,16 +176,11 @@ class PrepareDataset:
                             if not bbox:
                                 continue
                             
-                            # Apply class mapping from config
-                            if annotation.get('non_target_weed') is True:
-                                if annotation.get('non_target_weed_pred_conf', 0) > 0.99:
-                                    mapped_class_id = int(self.cfg.cvat.class_mapping.non_target)
-                                else:
-                                    mapped_class_id = int(self.cfg.cvat.class_mapping.plant)
-                            elif annotation.get('category_class_id') == 28:
-                                mapped_class_id = int(self.cfg.cvat.class_mapping.color_checker)
-                            else:
-                                mapped_class_id = int(self.cfg.cvat.class_mapping.plant)
+                            mapped_class_id = self.map_class_ids(annotation)
+
+                            if mapped_class_id is None:
+                                log.debug(f"Skipping non_target annotation for image {image_id}")
+                                continue
                             
                             # Convert bounding box to YOLO format
                             center_x, center_y, norm_width, norm_height = convert_bbox_to_yolo_format(
@@ -225,7 +268,7 @@ class PrepareDataset:
         df.loc[df['image_id'].isin(test_ids), 'split'] = 'test'
         
         # Save updated dataframe (also include timestamp to indicate data subset used)
-        output_path = self.train_data_path / f'train_images_{str(self.data_csv.parent.name)}_{str(self.data_csv.name)}.csv'
+        output_path = self.train_data_path / f'train_images_{str(self.data_csv.parent.name)}_{str(self.data_csv.name)}'
         df.to_csv(output_path, index=False)
         log.info(f"Split dataset into {len(train_ids)} train, {len(val_ids)} val, {len(test_ids)} test images")
         return df

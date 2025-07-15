@@ -1,16 +1,19 @@
-import os
 import json
 import logging
-import pandas as pd
-import zipfile
-from pathlib import Path
-from typing import List, Dict
-from omegaconf import DictConfig
-import cv2
+import os
 import shutil
+import zipfile
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
+from typing import Dict, List
 
-from src.utils.utils import find_most_recent_dataset_path, convert_bbox_to_yolo_format
+import cv2
+import pandas as pd
+from omegaconf import DictConfig
+
+from src.utils.constants import CLASS_MAPPING
+from src.utils.utils import convert_bbox_to_yolo_format, find_most_recent_dataset_path
+
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -59,7 +62,7 @@ class CVATFormatter:
         self.resize_factor = cfg.cvat.get('resize_factor', 1.0)
         
         # Store class mapping from config
-        self.class_mapping = cfg.cvat.class_mapping
+        self.class_mapping = CLASS_MAPPING
 
         # Parallel processing configuration
         self.parallel = cfg.cvat.get('parallel', False)
@@ -239,12 +242,7 @@ class CVATFormatter:
         Returns:
             Dict[int, str]: Dictionary mapping class IDs to class names
         """
-        # Create class mapping from config
-        class_names = {
-            int(self.class_mapping.plant): "plant",
-            int(self.class_mapping.non_target): "non_target",
-            int(self.class_mapping.color_checker): "colorchecker"
-        }
+        class_names = {v: k for k, v in CLASS_MAPPING.items()}
         
         return class_names
 
