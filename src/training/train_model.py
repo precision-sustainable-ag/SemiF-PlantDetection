@@ -7,6 +7,7 @@ import yaml
 from omegaconf import DictConfig
 from ultralytics import YOLO
 from src.utils.utils import get_latest_checkpoint
+from src.utils.constants import CLASS_MAPPING
 
 
 log = logging.getLogger(__name__)
@@ -34,21 +35,22 @@ class TrainModel:
     def create_data_yaml(self):
         """Create data.yaml file required by YOLO"""
         if self.cfg.train.prepare_dataset.ignore_non_targets:
-            names = {
-                0: 'plant',
-                1: 'colorchecker'
+            # exclude non_target
+            filtered_mapping = {
+                k: v for k, v in CLASS_MAPPING.items() if k != "non_target"
             }
         else:
-            names = {
-                0: 'plant',
-                1: 'non_target',
-                2: 'colorchecker'
-            }
+            filtered_mapping = CLASS_MAPPING
+
+        # Invert to get index → name
+        names_list = sorted(filtered_mapping.items(), key=lambda x: x[1])
+        names = {i: name for i, (name, _) in enumerate(names_list)}
 
         data = {
             'path': str(self.data_path),
             'train': 'train/images',
             'val': 'val/images',
+            'test': 'test/images',
             'nc': len(names),
             'names': names
         }
@@ -69,12 +71,11 @@ class TrainModel:
                 checkpoint = self.cfg.paths.train.checkpoint
                 log.info(f"Resuming from specified checkpoint: {checkpoint}")
             else:
-                checkpoint = get_latest_checkpoint(self.output_dir)
-                if checkpoint:
-                    log.info(f"Resuming from latest checkpoint: {checkpoint}")
-                else:
-                    checkpoint = self.cfg.train.model_name
-                    log.info(f"No checkpoint found — starting from model_name: {checkpoint}")
+                log.error("train_from_checkpoint is True but no checkpoint was provided.")
+                raise FileNotFoundError(
+                    "No checkpoint specified in cfg.paths.train.checkpoint while train_from_checkpoint=True. "
+                    "Please specify a checkpoint path or set train_from_checkpoint to False."
+                )
         else:
             checkpoint = self.cfg.train.model_name
             log.info(f"Starting fresh from model_name: {checkpoint}")

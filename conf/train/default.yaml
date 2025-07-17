@@ -11,6 +11,7 @@ device: "1" # TODO: implement GPUtils for automatic selection of GPUs
 
 random_seed: 42
 validation_split: 0.2
+test_split: 0.1
 parallel: true
 parallel_workers: 16
 

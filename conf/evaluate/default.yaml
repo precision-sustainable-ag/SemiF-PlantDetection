@@ -1,0 +1,7 @@
+tasks:
+  - evaluate_model
+
+split: test #val
+save_json: true
+run_version: 1 # looks in runs_1; is ignored if custom_path is provided
+custom_path: # Provide a custom model path, if provided, ignores run_version

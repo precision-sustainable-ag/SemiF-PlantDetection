@@ -1,3 +1,4 @@
+import re
 import yaml
 import logging
 from pathlib import Path
@@ -48,21 +49,32 @@ def find_most_recent_dataset_path(base_dataset_path):
     
     return dataset_path
 
+
 def get_latest_checkpoint(model_dir: Path) -> Path | None:
     """
-    Finds the most recent `best.pt` checkpoint under model_dir/run*/
+    Finds the `best.pt` checkpoint under model_dir/run* with the highest run number.
     """
-    runs = sorted(
-        [d for d in model_dir.glob("run*") if d.is_dir()],
-        key=lambda d: d.stat().st_mtime,
-        reverse=True
-    )
-    for run in runs:
-        best_ckpt = run / "weights" / "best.pt"
+    runs = []
+    for d in model_dir.glob("run*"):
+        if d.is_dir():
+            m = re.match(r"run(\d*)$", d.name)
+            if m:
+                n = int(m.group(1)) if m.group(1) else 1
+                runs.append((n, d))
+
+    if not runs:
+        log.warning(f"No run* directories found in {model_dir}")
+        return None
+
+    # pick the one with highest number
+    runs.sort(reverse=True)  # sort by run number descending
+    for run_num, run_dir in runs:
+        best_ckpt = run_dir / "weights" / "best.pt"
         if best_ckpt.exists():
-            log.info(f"Found latest checkpoint: {best_ckpt}")
+            log.info(f"Found latest checkpoint in {run_dir.name}: {best_ckpt}")
             return best_ckpt
-    log.warning(f"No checkpoint found in {model_dir}")
+
+    log.warning(f"No checkpoint found in any run directory under {model_dir}")
     return None
 
 def get_annotated_image_ids(lts_locations):

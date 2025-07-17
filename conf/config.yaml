@@ -5,6 +5,7 @@ defaults:
   - preprocess: default
   - export: default
   - train: default
+  - evaluate : default
 
 # each mode is a pipeline mode
 # preprocess/train/export

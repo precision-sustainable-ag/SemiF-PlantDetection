@@ -22,7 +22,12 @@ preprocess:
 train:
   model_dir: ${paths.project_dir}/train/models
   model_data_dir: ${paths.project_dir}/train/data
-  checkpoint: ""
+  checkpoint: 
+
+# evaluation output paths
+evaluate:
+  data_yaml: ${paths.train.model_data_dir}/data.yaml
+  save_dir: ${paths.project_dir}/evaluate
 
 # path to database
 db_path: ${paths.data_dir}/db/agir.db
