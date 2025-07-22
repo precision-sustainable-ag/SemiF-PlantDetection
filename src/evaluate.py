@@ -1,17 +1,21 @@
 from omegaconf import DictConfig
 import logging
+
 from src.evaluating.evaluate_model import main as evaluate_model_main
+from src.evaluating.model_inference import main as model_inference_main
 
 log = logging.getLogger(__name__)
 
 TASK_REGISTRY = {
     "evaluate_model": evaluate_model_main,
+    "model_inference": model_inference_main,
 }
 
 def main(cfg: DictConfig):
     """
     Main entrypoint for evaluate mode.
     - evaluate_model
+    - model_inference
     """
     log.info(f"Tasks: {cfg.evaluate.tasks}")
 

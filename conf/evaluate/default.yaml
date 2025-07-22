@@ -1,7 +1,11 @@
 tasks:
   - evaluate_model
+  - model_inference
 
 split: test #val
 save_json: true
 run_version: 1 # looks in runs_1; is ignored if custom_path is provided
 custom_path: # Provide a custom model path, if provided, ignores run_version
+
+conf: 0.25                # confidence threshold for predictions
+scales: [0.5, 1.0, 1.5]   # multiscale inference scales
