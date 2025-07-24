@@ -149,6 +149,16 @@ class MultiScaleInferencer:
         self._run_multi_gpu(images, save_dir)
 
     def _run_multi_gpu(self, images, save_dir):
+        """
+        Distribute images across multiple GPUs and run inference
+
+        Args:
+            images (list[Path]): List of image paths
+            save_dir (Path): Directory to save annotated images
+            
+        Raises:
+            RuntimeError: If the number of available GPUs (after excluding `exclude_id`) is less than `num_gpus`.
+        """
         available_ids = getAvailable(order='memory', limit=100, excludeID=[self.exclude_id])
         if len(available_ids) < self.num_gpus:
             raise RuntimeError(f"Requested {self.num_gpus} GPUs, but only {len(available_ids)} available after excluding GPU {self.exclude_id}")
