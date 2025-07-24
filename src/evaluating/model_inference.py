@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-
 import cv2
 import torch
 import yaml
@@ -8,6 +7,7 @@ from omegaconf import DictConfig
 from ultralytics import YOLO
 from torchvision.ops import box_iou
 import torch.multiprocessing as mp
+from GPUtil import getAvailable
 
 from src.utils.utils import get_latest_checkpoint
 
@@ -48,8 +48,10 @@ class MultiScaleInferencer:
         self.cfg = cfg
         self.model_dir = Path(cfg.paths.train.model_dir)
         self.base_save_dir = Path(cfg.paths.evaluate.save_dir)
-        self.conf_thres = cfg.evaluate.conf or 0.25
-        self.scales = cfg.evaluate.scales or [0.5, 1.0, 1.5]
+        self.conf_thres = cfg.evaluate.conf
+        self.scales = cfg.evaluate.scales
+        self.num_gpus = cfg.evaluate.gpus.n
+        self.exclude_id = cfg.evaluate.gpus.exclude_id
 
         self.model_path = self._resolve_checkpoint()
         self.source_folder = self._resolve_test_images()
@@ -147,34 +149,25 @@ class MultiScaleInferencer:
         self._run_multi_gpu(images, save_dir)
 
     def _run_multi_gpu(self, images, save_dir):
-        """
-        Distribute images across multiple GPUs and run inference
+        available_ids = getAvailable(order='memory', limit=100, excludeID=[self.exclude_id])
+        if len(available_ids) < self.num_gpus:
+            raise RuntimeError(f"Requested {self.num_gpus} GPUs, but only {len(available_ids)} available after excluding GPU {self.exclude_id}")
+        selected_gpus = available_ids[:self.num_gpus]
 
-        Args:
-            images (list[Path]): List of image paths
-            save_dir (Path): Directory to save annotated images
-        """
-        max_gpus = 4
-        available_gpus = torch.cuda.device_count()
-        num_gpus = min(available_gpus, max_gpus)
-
-        if num_gpus < 1:
-            raise RuntimeError("No GPUs found for multi-GPU inference.")
-        log.info(f"Using {num_gpus} GPUs for inference.")
-
-        chunks = [images[i::num_gpus] for i in range(num_gpus)]
+        log.info(f"Using GPUs: {selected_gpus}")
+        chunks = [images[i::self.num_gpus] for i in range(self.num_gpus)]
         mp.set_start_method("spawn", force=True)
 
         processes = []
-        for gpu_id in range(num_gpus):
-            p = mp.Process(target=self._worker, args=(gpu_id, chunks[gpu_id], save_dir))
+        for i, gpu_id in enumerate(selected_gpus):
+            p = mp.Process(target=self._worker, args=(gpu_id, chunks[i], save_dir))
             p.start()
             processes.append(p)
 
         for p in processes:
             p.join()
 
-        log.info(f"Multiscale inference completed on {num_gpus} GPUs.")
+        log.info(f"Multiscale inference completed on {self.num_gpus} GPUs.")
 
     def _worker(self, gpu_id, images, save_dir):
         log.info(f"GPU {gpu_id}: Starting inference on {len(images)} images.")
