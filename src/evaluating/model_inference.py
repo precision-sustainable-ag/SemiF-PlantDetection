@@ -3,13 +3,16 @@ from pathlib import Path
 import cv2
 import torch
 import yaml
-from omegaconf import DictConfig
+import pandas as pd
+from omegaconf import DictConfig, ListConfig
 from ultralytics import YOLO
-from torchvision.ops import box_iou
 import torch.multiprocessing as mp
+from multiprocessing import Value, Manager
 from GPUtil import getAvailable
+from torchvision.ops import box_iou
 
 from src.utils.utils import get_latest_checkpoint
+from src.utils.nms_methods import benchmark_nms
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +52,17 @@ class MultiScaleInferencer:
         self.model_dir = Path(cfg.paths.train.model_dir)
         self.base_save_dir = Path(cfg.paths.evaluate.save_dir)
         self.conf_thres = cfg.evaluate.conf
+        self.iou_thres = cfg.evaluate.iou
         self.scales = cfg.evaluate.scales
         self.num_gpus = cfg.evaluate.gpus.n
         self.exclude_id = cfg.evaluate.gpus.exclude_id
 
         self.model_path = self._resolve_checkpoint()
         self.source_folder = self._resolve_test_images()
+        self.gt_label_folder = self.source_folder.parent / "labels"
+
+        self.metrics = []
+        self.total_nms_time = 0.0
 
     def _resolve_checkpoint(self) -> Path:
         """
@@ -136,6 +144,41 @@ class MultiScaleInferencer:
 
         candidate.mkdir(parents=True, exist_ok=False)
         return candidate
+    
+    def _load_gt_boxes(self, label_path: Path, img_w: int, img_h: int):
+        """Reads YOLO format labels and converts to [x1,y1,x2,y2,class]."""
+        labels = torch.tensor([list(map(float, line.split())) for line in open(label_path)], dtype=torch.float32)
+        if labels.numel() == 0:
+            return torch.zeros((0, 5))
+        x_c, y_c, w, h = labels[:, 1], labels[:, 2], labels[:, 3], labels[:, 4]
+        x1, y1 = (x_c - w / 2) * img_w, (y_c - h / 2) * img_h
+        x2, y2 = (x_c + w / 2) * img_w, (y_c + h / 2) * img_h
+        cls = labels[:, 0:1]
+        return torch.cat([x1.unsqueeze(1), y1.unsqueeze(1), x2.unsqueeze(1), y2.unsqueeze(1), cls], dim=1)
+    
+    def _evaluate_nms(self, preds: torch.Tensor, gts: torch.Tensor, iou_threshold=0.5):
+        """Compare predictions with ground truth boxes and return TP, FP, FN, precision, recall, F1."""
+        device = preds.device
+        gts = gts.to(device)
+
+        if preds.numel() == 0:
+            return 0, 0, gts.shape[0], 0.0, 0.0, 0.0
+        if gts.numel() == 0:
+            return 0, preds.shape[0], 0, 0.0, 0.0, 0.0
+
+        pred_boxes, gt_boxes = preds[:, :4], gts[:, :4]
+        ious = box_iou(pred_boxes, gt_boxes)
+
+        max_iou, _ = ious.max(1)
+        tp = (max_iou > iou_threshold).sum().item()
+        fp = preds.shape[0] - tp
+        fn = gts.shape[0] - tp
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        return tp, fp, fn, precision, recall, f1
 
     def run(self):
         images = sorted(list(self.source_folder.glob("*.jpg")) + list(self.source_folder.glob("*.png")))
@@ -143,56 +186,88 @@ class MultiScaleInferencer:
             raise FileNotFoundError(f"No images found in {self.source_folder}")
 
         log.info(f"Found {len(images)} images in {self.source_folder}")
-
         save_dir = self._get_unique_save_dir(self.base_save_dir)
 
-        self._run_multi_gpu(images, save_dir)
+        conf_values = self.cfg.evaluate.conf
+        if isinstance(conf_values, ListConfig):
+            conf_values = list(conf_values)
+
+        iou_values = self.cfg.evaluate.iou
+        if isinstance(iou_values, ListConfig):
+            iou_values = list(iou_values)
+
+        conf_list = conf_values if isinstance(conf_values, list) else [conf_values]
+        iou_list = iou_values if isinstance(iou_values, list) else [iou_values]
+
+        for conf in conf_list:
+            for iou in iou_list:
+                conf = float(conf)
+                iou = float(iou)
+
+                log.info(f"Running benchmark for conf={conf}, iou={iou}")
+                self.conf_thres = conf
+                self.iou_thres = iou
+
+                # Run GPU inference for this configuration
+                self._run_multi_gpu(images, save_dir)
+
+                # Save CSV
+                nms_method = self.cfg.evaluate.nms_method
+                results_dir = self.base_save_dir / "nms_benchmark"
+                results_dir.mkdir(parents=True, exist_ok=True)
+                csv_path = results_dir / f"benchmark_{nms_method}_conf_{conf}_iou_{iou}.csv"
+                pd.DataFrame(self.metrics).to_csv(csv_path, index=False)
+                log.info(f"NMS Benchmark ({nms_method}, conf={conf}, iou={iou}) saved to {csv_path}")
+
+                # Reset for next config
+                self.metrics.clear()
+                self.total_nms_time = 0.0
 
     def _run_multi_gpu(self, images, save_dir):
-        """
-        Distribute images across multiple GPUs and run inference
+        manager = Manager()
+        shared_metrics = manager.list()
+        shared_time = manager.Value('d', 0.0)
 
-        Args:
-            images (list[Path]): List of image paths
-            save_dir (Path): Directory to save annotated images
-            
-        Raises:
-            RuntimeError: If the number of available GPUs (after excluding `exclude_id`) is less than `num_gpus`.
-        """
         available_ids = getAvailable(order='memory', limit=100, excludeID=[self.exclude_id])
         if len(available_ids) < self.num_gpus:
-            raise RuntimeError(f"Requested {self.num_gpus} GPUs, but only {len(available_ids)} available after excluding GPU {self.exclude_id}")
-        selected_gpus = available_ids[:self.num_gpus]
+            raise RuntimeError(f"Requested {self.num_gpus} GPUs, but only {len(available_ids)} available")
 
-        log.info(f"Using GPUs: {selected_gpus}")
+        selected_gpus = available_ids[:self.num_gpus]
         chunks = [images[i::self.num_gpus] for i in range(self.num_gpus)]
         mp.set_start_method("spawn", force=True)
 
         processes = []
         for i, gpu_id in enumerate(selected_gpus):
-            p = mp.Process(target=self._worker, args=(gpu_id, chunks[i], save_dir))
+            p = mp.Process(target=self._worker, args=(gpu_id, chunks[i], save_dir, shared_metrics, shared_time))
             p.start()
             processes.append(p)
 
         for p in processes:
             p.join()
 
+        # Merge shared data back
+        self.metrics = list(shared_metrics)
+        self.total_nms_time = shared_time.value
         log.info(f"Multiscale inference completed on {self.num_gpus} GPUs.")
 
-    def _worker(self, gpu_id, images, save_dir):
-        log.info(f"GPU {gpu_id}: Starting inference on {len(images)} images.")
+    def _worker(self, gpu_id, images, save_dir, shared_metrics, shared_time):
+        logging.basicConfig(
+            level=logging.INFO,
+            format=f"[GPU {gpu_id}][%(processName)s][%(levelname)s] - %(message)s"
+        )
+        log.info(f"Worker started on GPU {gpu_id} with {len(images)} images.")
         device = f"cuda:{gpu_id}"
         model = YOLO(self.model_path)
         model.to(device)
 
         for img_path in images:
-            self._process_image(img_path, model, device, save_dir)
+            self._process_image(img_path, model, device, save_dir, shared_metrics, shared_time)     
 
         log.info(f"GPU {gpu_id}: Done.")
 
-    def _process_image(self, img_path, model, device, save_dir):
+    def _process_image(self, img_path, model, device, save_dir, shared_metrics, shared_time):
         """
-        Process a single image at multiple scales, perform inference, NMS and save result.
+        Process a single image at multiple scales, perform inference, apply NMS, evaluate against GT, and save results.
 
         Args:
             img_path (Path): Image path
@@ -210,17 +285,14 @@ class MultiScaleInferencer:
         all_preds = []
         max_allowed_size = 2048
 
+        # Multi-scale inference
         for scale in self.scales:
-            # compute target size at this scale
             target_w, target_h = max(1, int(w0 * scale)), max(1, int(h0 * scale))
-            # clamp to max_allowed_size while preserving aspect ratio
             ratio = min(max_allowed_size / target_w, max_allowed_size / target_h, 1.0)
             new_w, new_h = int(target_w * ratio), int(target_h * ratio)
 
             resized = cv2.resize(orig_img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-            imgsz = max(new_w, new_h)
-            imgsz = (imgsz + 31) // 32 * 32
+            imgsz = (max(new_w, new_h) + 31) // 32 * 32
 
             results = model.predict(
                 resized,
@@ -236,10 +308,9 @@ class MultiScaleInferencer:
                     confs = r.boxes.conf.clone()
                     clss = r.boxes.cls.clone()
 
-                    # undo both scale *and* ratio
+                    # undo both scale and ratio
                     resize_factor_x = new_w / w0
                     resize_factor_y = new_h / h0
-
                     boxes[:, [0, 2]] /= resize_factor_x
                     boxes[:, [1, 3]] /= resize_factor_y
 
@@ -251,15 +322,50 @@ class MultiScaleInferencer:
             return
 
         all_preds = torch.cat(all_preds, dim=0)
-        final_preds = run_nms(all_preds, iou_thres=0.5)
 
-        log.info(f"Final predictions: {len(final_preds)} boxes after NMS for {img_path.name}")
-        self.annotate_and_save(orig_img, final_preds, img_path, save_dir)
+        # Load ground truth labels
+        gt_path = self.gt_label_folder / f"{img_path.stem}.txt"
+        gt_boxes = self._load_gt_boxes(gt_path, w0, h0) if gt_path.exists() else torch.zeros((0, 5))
 
-    def annotate_and_save(self, orig_img, preds, img_path, save_dir):
+        # Draw pre-NMS boxes
+        nms_method = self.cfg.evaluate.nms_method
+        pre_save_path = save_dir / f"{img_path.stem}_{nms_method}_pre_nms{img_path.suffix}"
+        self.annotate_and_save(orig_img, all_preds, pre_save_path.parent, pre_save_path.name)
+        log.info(f"Pre-NMS: {all_preds.shape[0]} boxes for {img_path.name}")
+
+        # Apply NMS
+        final_preds, nms_time = benchmark_nms(
+            all_preds,
+            iou_thres=self.iou_thres,
+            conf_thres=self.conf_thres,
+            method=nms_method
+        )
+        log.info(f"NMS [{nms_method}] → {len(final_preds)} boxes kept in {nms_time:.2f} ms for {img_path.name}")
+
+        # Evaluate against GT (TP, FP, FN)
+        tp, fp, fn, precision, recall, f1 = self._evaluate_nms(final_preds, gt_boxes)
+        shared_metrics.append({
+            "image": img_path.name,
+            "pre_nms_count": all_preds.shape[0],
+            "post_nms_count": final_preds.shape[0],
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1
+        })
+        shared_time.value += nms_time
+
+        # Draw post-NMS boxes
+        post_save_path = save_dir / f"{img_path.stem}_{nms_method}_post_nms{img_path.suffix}"
+        self.annotate_and_save(orig_img, final_preds, post_save_path.parent, post_save_path.name)
+
+    def annotate_and_save(self, orig_img, preds, save_dir, out_filename):
         annotated = orig_img.copy()
         model = YOLO(self.model_path)
-        for box in preds:
+        valid_preds = [b for b in preds if int(b[5]) in model.names]
+        for box in valid_preds:
             x1, y1, x2, y2, conf, cls = box
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
             label = f"{model.names[int(cls)]} {conf:.2f}"
@@ -267,7 +373,8 @@ class MultiScaleInferencer:
             cv2.putText(annotated, label, (x1, max(0, y1 - 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-        out_path = save_dir / img_path.name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        out_path = save_dir / out_filename
         cv2.imwrite(str(out_path), annotated)
         log.info(f"Saved: {out_path}")
 
