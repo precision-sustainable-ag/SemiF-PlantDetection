@@ -213,7 +213,7 @@ class MultiScaleInferencer:
 
                 # Save CSV
                 nms_method = self.cfg.evaluate.nms_method
-                results_dir = self.base_save_dir / "nms_benchmark"
+                results_dir = save_dir / "nms_benchmark"   # save inside the unique multi_scale folder
                 results_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = results_dir / f"benchmark_{nms_method}_conf_{conf}_iou_{iou}.csv"
                 pd.DataFrame(self.metrics).to_csv(csv_path, index=False)
@@ -297,7 +297,8 @@ class MultiScaleInferencer:
             results = model.predict(
                 resized,
                 imgsz=imgsz,
-                conf=self.conf_thres,
+                conf=0.0,
+                iou=1.0,
                 device=device,
                 verbose=False
             )
