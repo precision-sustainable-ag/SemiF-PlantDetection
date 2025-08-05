@@ -1,7 +1,19 @@
 tasks:
   - evaluate_model
+  - benchmark_nms
+  - visualize_nms
 
 split: test #val
 save_json: true
 run_version: 1 # looks in runs_1; is ignored if custom_path is provided
 custom_path: # Provide a custom model path, if provided, ignores run_version
+
+conf: [0.25, 0.35, 0.45, 0.55] # confidence threshold for predictions
+iou: [0.5, 0.6, 0.7, 0.8] # iou threshold values for predictions
+scales: [0.15, 0.25, 0.5, 1, 1.5] # multiscale inference scales
+
+gpus:
+  n: 3          # number of GPUs to use
+  exclude_id: 0 # skip first GPU
+
+nms_method: [custom, ultralytics, soft, merge, matrix]

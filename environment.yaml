@@ -18,6 +18,7 @@ dependencies:
   - pip:
     - torch
     - torchvision
+    - gputil
   # - matplotlib
   # - seaborn
   # - scikit-learn
