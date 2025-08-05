@@ -4,66 +4,81 @@ import networkx as nx
 import torchvision
 from torchvision.ops import box_iou
 
-try:
-    from ultralytics.utils.ops import non_max_suppression as ultralytics_nms_fn
-    from ultralytics.utils.ops import xywh2xyxy
-except ImportError:
-    ultralytics_nms_fn = None
-    xywh2xyxy = lambda x: x
-
 import logging
 log = logging.getLogger(__name__)
 
 
-def yolo_nms(prediction: torch.Tensor, conf_thres=0.25, iou_thres=0.45,
-             classes=None, agnostic=False, max_det=300, nm=0):
+def custom_nms(preds: torch.Tensor, iou_thres=0.45, conf_thres=0.25,
+               max_det=300, top_k=500, soft=True, merge=False):
     """
-    performs the original yolo nms which uses class-aware hard suppression. 
-    selects highest confidence boxes and removes overlaps above iou threshold.
+    Ultra-fast Custom NMS optimized for plant detection.
+
+    - Drops very low-confidence boxes early (conf < conf_thres * 0.5)
+    - Keeps only top_k boxes by confidence before expensive operations
+    - Uses standard torchvision NMS for fast pruning
+    - Applies lightweight Soft-NMS decay only on top 50 boxes
+    - Merge-NMS disabled by default (optional)
+
+    Args:
+        preds (Tensor): (N,6) [x1,y1,x2,y2,conf,cls]
+        iou_thres (float): IoU threshold for suppression
+        conf_thres (float): Confidence threshold to keep boxes
+        max_det (int): Maximum detections to return
+        top_k (int): Keep only top_k boxes before Soft/Merge steps
+        soft (bool): Whether to apply Soft-NMS decay
+        merge (bool): Whether to merge overlapping boxes (optional)
+
+    Returns:
+        Tensor: Filtered boxes [x1,y1,x2,y2,conf,cls]
     """
-    if isinstance(prediction, (list, tuple)):
-        prediction = prediction[0]
+    if preds.numel() == 0:
+        return preds
 
-    device = prediction.device
-    bs = prediction.shape[0]
-    nc = prediction.shape[1] - nm - 4
-    mi = 4 + nc
-    xc = prediction[:, 4:mi].amax(1) > conf_thres
+    device = preds.device
 
-    max_wh = 7680
-    max_nms = 30000
-    output = [torch.zeros((0, 6 + nm), device=device)] * bs
+    # Early confidence filtering
+    preds = preds[preds[:, 4] > conf_thres * 0.5]
+    if preds.numel() == 0:
+        return preds
 
-    for xi, x in enumerate(prediction):
-        x = x.transpose(0, -1)[xc[xi]]
-        if not x.shape[0]:
-            continue
+    # Keep only top-k highest confidence boxes
+    preds = preds[preds[:, 4].argsort(descending=True)[:top_k]]
 
-        box, cls, mask = x.split((4, nc, nm), 1)
-        box = xywh2xyxy(box)
+    # Hard NMS pruning using torchvision.nms
+    boxes, scores, classes = preds[:, :4], preds[:, 4], preds[:, 5]
+    offsets = classes * 4096  # separate classes
+    keep = torch.ops.torchvision.nms(boxes + offsets.unsqueeze(1), scores, iou_thres)[:max_det]
+    kept = preds[keep]
 
-        conf, j = cls.max(1, keepdim=True)
-        x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
-        if not x.shape[0]:
-            continue
+    # Lightweight Soft-NMS (only on top 50 boxes)
+    if soft and kept.size(0) > 1:
+        top_n = min(50, kept.size(0))
+        ious = box_iou(kept[:top_n, :4], kept[:top_n, :4])
+        decay = torch.exp(- (ious ** 2) / 0.5)
+        decay.fill_diagonal_(1.0)
+        kept[:top_n, 4] *= decay.mean(1)
+        kept = kept[kept[:, 4].argsort(descending=True)]
 
-        if classes is not None:
-            cls_tensor = torch.tensor(classes, device=device)
-            x = x[(x[:, 5:6] == cls_tensor.unsqueeze(0)).any(1)]
-        if not x.shape[0]:
-            continue
+    # Optional Merge-NMS (disabled by default)
+    if merge and kept.size(0) > 1:
+        ious = box_iou(kept[:, :4], kept[:, :4])
+        adjacency = ious > iou_thres
+        visited = torch.zeros(kept.size(0), dtype=torch.bool, device=device)
+        merged = []
+        for i in range(kept.size(0)):
+            if visited[i]:
+                continue
+            cluster_idx = adjacency[i] & ~visited
+            cluster = kept[cluster_idx]
+            weights = cluster[:, 4:5]
+            weighted_box = (cluster[:, :4] * weights).sum(0) / weights.sum()
+            merged_conf = cluster[:, 4].max()
+            merged_cls = kept[i, 5]
+            merged.append(torch.cat([weighted_box, merged_conf.unsqueeze(0), merged_cls.unsqueeze(0)]))
+            visited[cluster_idx] = True
+        kept = torch.stack(merged)
 
-        x = x[x[:, 4].argsort(descending=True)[:max_nms]]
-        boxes, scores = x[:, :4], x[:, 4]
-        c = x[:, 5:6] * (0 if agnostic else max_wh)
-        boxes_for_nms = boxes + c
-
-        keep = torchvision.ops.nms(boxes_for_nms, scores, iou_thres)[:max_det]
-        x = x[keep]
-        output[xi] = x
-
-    return output[0] if bs == 1 else output
-
+    return kept
 
 def ultralytics_nms(preds: torch.Tensor, iou_thres=0.45, conf_thres=0.25,
                     max_det=300, classes=None, agnostic=False):
@@ -267,8 +282,8 @@ def matrix_nms(preds: torch.Tensor, iou_thres=0.5, conf_thres=0.25, sigma=0.5):
 def benchmark_nms(preds: torch.Tensor, iou_thres=0.5, conf_thres=0.25, method="yolo"):
     start = time.time()
 
-    if method == "yolo":
-        filtered = yolo_nms(preds.unsqueeze(0), conf_thres=conf_thres, iou_thres=iou_thres)
+    if method == "custom":
+        filtered = custom_nms(preds, iou_thres=iou_thres, conf_thres=conf_thres)
     elif method == "ultralytics":
         filtered = ultralytics_nms(preds, iou_thres=iou_thres, conf_thres=conf_thres)
     elif method == "graph":

@@ -4,6 +4,7 @@ import cv2
 import torch
 import yaml
 import pandas as pd
+import numpy as np
 from omegaconf import DictConfig, ListConfig
 from ultralytics import YOLO
 import torch.multiprocessing as mp
@@ -17,32 +18,6 @@ from src.utils.nms_methods import benchmark_nms
 log = logging.getLogger(__name__)
 
 
-def run_nms(preds: torch.Tensor, iou_thres=0.5):
-    """
-    Runs Non-Maximum Suppression (NMS) on a set of predictions.
-    Keeps the highest confidence boxes and removes overlapping boxes beyond `iou_thres`.
-
-    Args:
-        preds (torch.Tensor): (N, 6) Tensor of predictions [x1, y1, x2, y2, conf, cls]
-        iou_thres (float): IoU threshold for suppression
-
-    Returns:
-        torch.Tensor: filtered predictions after NMS
-    """
-    keep = []
-    idxs = preds[:, 4].argsort(descending=True)
-
-    while idxs.numel() > 0:
-        i = idxs[0]
-        keep.append(i.item())
-        if idxs.numel() == 1:
-            break
-        ious = box_iou(preds[i, :4].unsqueeze(0), preds[idxs[1:], :4]).squeeze()
-        idxs = idxs[1:][ious <= iou_thres]
-
-    return preds[keep]
-
-
 class MultiScaleInferencer:
     def __init__(self, cfg: DictConfig):
         """
@@ -51,15 +26,23 @@ class MultiScaleInferencer:
         self.cfg = cfg
         self.model_dir = Path(cfg.paths.train.model_dir)
         self.base_save_dir = Path(cfg.paths.evaluate.save_dir)
-        self.conf_thres = cfg.evaluate.conf
-        self.iou_thres = cfg.evaluate.iou
         self.scales = cfg.evaluate.scales
         self.num_gpus = cfg.evaluate.gpus.n
         self.exclude_id = cfg.evaluate.gpus.exclude_id
 
+        conf_values = cfg.evaluate.conf
+        iou_values = cfg.evaluate.iou
+        self.conf_list = list(conf_values) if isinstance(conf_values, (ListConfig, list)) else [float(conf_values)]
+        self.iou_list = list(iou_values) if isinstance(iou_values, (ListConfig, list)) else [float(iou_values)]
+
         self.model_path = self._resolve_checkpoint()
         self.source_folder = self._resolve_test_images()
         self.gt_label_folder = self.source_folder.parent / "labels"
+
+        if isinstance(cfg.evaluate.nms_method, ListConfig) or isinstance(cfg.evaluate.nms_method, list):
+            self.nms_methods = list(cfg.evaluate.nms_method)
+        else:
+            self.nms_methods = [cfg.evaluate.nms_method]
 
         self.metrics = []
         self.total_nms_time = 0.0
@@ -134,15 +117,20 @@ class MultiScaleInferencer:
         return test_path
 
     def _get_unique_save_dir(self, base_dir: Path) -> Path:
-        base_name = "multi_scale"
-        candidate = base_dir / base_name
-        idx = 1
+        parent_dir = base_dir / "nms_benchmark"
+        parent_dir.mkdir(parents=True, exist_ok=True)
 
+        base_name = "multi_scale"
+        candidate = parent_dir / base_name
+        idx = 1
         while candidate.exists():
             idx += 1
-            candidate = base_dir / f"{base_name}{idx}"
+            candidate = parent_dir / f"{base_name}{idx}"
 
         candidate.mkdir(parents=True, exist_ok=False)
+        (candidate / "images").mkdir()
+        (candidate / "metrics").mkdir()
+        (candidate / "plots").mkdir()
         return candidate
     
     def _load_gt_boxes(self, label_path: Path, img_w: int, img_h: int):
@@ -187,41 +175,37 @@ class MultiScaleInferencer:
 
         log.info(f"Found {len(images)} images in {self.source_folder}")
         save_dir = self._get_unique_save_dir(self.base_save_dir)
+        metrics_csv = save_dir / "metrics" / "nms_benchmark_all.csv"
 
-        conf_values = self.cfg.evaluate.conf
-        if isinstance(conf_values, ListConfig):
-            conf_values = list(conf_values)
+        for method in self.nms_methods:
+            for conf in self.conf_list:
+                for iou in self.iou_list:
+                    log.info(f"Running benchmark → method={method}, conf={conf}, iou={iou}")
+                    self.current_method = method
+                    self.conf_thres = float(conf)
+                    self.iou_thres = float(iou)
 
-        iou_values = self.cfg.evaluate.iou
-        if isinstance(iou_values, ListConfig):
-            iou_values = list(iou_values)
+                    self._run_multi_gpu(images, save_dir)
 
-        conf_list = conf_values if isinstance(conf_values, list) else [conf_values]
-        iou_list = iou_values if isinstance(iou_values, list) else [iou_values]
+                    # Add metadata to metrics
+                    for record in self.metrics:
+                        record["method"] = method
+                        record["conf"] = conf
+                        record["iou"] = iou
 
-        for conf in conf_list:
-            for iou in iou_list:
-                conf = float(conf)
-                iou = float(iou)
+                    # Append results to CSV
+                    df_current = pd.DataFrame(self.metrics)
+                    if metrics_csv.exists():
+                        df_existing = pd.read_csv(metrics_csv)
+                        df_all = pd.concat([df_existing, df_current], ignore_index=True)
+                    else:
+                        df_all = df_current
+                    df_all.to_csv(metrics_csv, index=False)
 
-                log.info(f"Running benchmark for conf={conf}, iou={iou}")
-                self.conf_thres = conf
-                self.iou_thres = iou
+                    log.info(f"Metrics for {method}, conf={conf}, iou={iou} saved to {metrics_csv}")
+                    self.metrics.clear()
+                    self.total_nms_time = 0.0
 
-                # Run GPU inference for this configuration
-                self._run_multi_gpu(images, save_dir)
-
-                # Save CSV
-                nms_method = self.cfg.evaluate.nms_method
-                results_dir = save_dir / "nms_benchmark"   # save inside the unique multi_scale folder
-                results_dir.mkdir(parents=True, exist_ok=True)
-                csv_path = results_dir / f"benchmark_{nms_method}_conf_{conf}_iou_{iou}.csv"
-                pd.DataFrame(self.metrics).to_csv(csv_path, index=False)
-                log.info(f"NMS Benchmark ({nms_method}, conf={conf}, iou={iou}) saved to {csv_path}")
-
-                # Reset for next config
-                self.metrics.clear()
-                self.total_nms_time = 0.0
 
     def _run_multi_gpu(self, images, save_dir):
         manager = Manager()
@@ -328,20 +312,14 @@ class MultiScaleInferencer:
         gt_path = self.gt_label_folder / f"{img_path.stem}.txt"
         gt_boxes = self._load_gt_boxes(gt_path, w0, h0) if gt_path.exists() else torch.zeros((0, 5))
 
-        # Draw pre-NMS boxes
-        nms_method = self.cfg.evaluate.nms_method
-        pre_save_path = save_dir / f"{img_path.stem}_{nms_method}_pre_nms{img_path.suffix}"
-        self.annotate_and_save(orig_img, all_preds, pre_save_path.parent, pre_save_path.name)
-        log.info(f"Pre-NMS: {all_preds.shape[0]} boxes for {img_path.name}")
-
         # Apply NMS
         final_preds, nms_time = benchmark_nms(
             all_preds,
             iou_thres=self.iou_thres,
             conf_thres=self.conf_thres,
-            method=nms_method
+            method=self.current_method
         )
-        log.info(f"NMS [{nms_method}] → {len(final_preds)} boxes kept in {nms_time:.2f} ms for {img_path.name}")
+        log.info(f"NMS [{self.current_method}] → {len(final_preds)} boxes kept in {nms_time:.2f} ms for {img_path.name}")
 
         # Evaluate against GT (TP, FP, FN)
         tp, fp, fn, precision, recall, f1 = self._evaluate_nms(final_preds, gt_boxes)
@@ -354,13 +332,38 @@ class MultiScaleInferencer:
             "fn": fn,
             "precision": precision,
             "recall": recall,
-            "f1": f1
+            "f1": f1,
+            "nms_time_ms": nms_time
         })
         shared_time.value += nms_time
 
-        # Draw post-NMS boxes
-        post_save_path = save_dir / f"{img_path.stem}_{nms_method}_post_nms{img_path.suffix}"
-        self.annotate_and_save(orig_img, final_preds, post_save_path.parent, post_save_path.name)
+        out_path = save_dir / "images" / f"{img_path.stem}_{self.current_method}.jpg"
+        self.save_side_by_side(orig_img, all_preds, final_preds, out_path.parent, out_path.name)
+
+    def save_side_by_side(self, orig_img, pre_preds, post_preds, save_dir, out_filename):
+        """Draws Pre-NMS (blue) and Post-NMS (red) boxes and saves them side by side with thicker lines and bigger text."""
+        
+        def draw_boxes(img, preds, color):
+            annotated = img.copy()
+            for x1, y1, x2, y2, conf, cls in preds:
+                cv2.rectangle(annotated, (int(x1), int(y1)), (int(x2), int(y2)), color, 15) 
+                cv2.putText(annotated, f"{conf:.2f}", (int(x1), max(0, int(y1) - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 5) 
+            return annotated
+
+        # Pre-NMS: Blue, Post-NMS: Red
+        left = draw_boxes(orig_img, pre_preds, (255, 0, 0))
+        right = draw_boxes(orig_img, post_preds, (0, 0, 255)) 
+        combined = np.hstack((left, right))
+
+        # Labels with larger font
+        cv2.putText(combined, "Pre-NMS", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 5, (255, 255, 255), 5)
+        cv2.putText(combined, "Post-NMS", (orig_img.shape[1] + 10, 40), cv2.FONT_HERSHEY_SIMPLEX, 5, (255, 255, 255), 5)
+
+        save_dir.mkdir(parents=True, exist_ok=True)
+        out_path = save_dir / out_filename
+        cv2.imwrite(str(out_path), combined)
+        log.info(f"Saved side-by-side visualization: {out_path}")
 
     def annotate_and_save(self, orig_img, preds, save_dir, out_filename):
         annotated = orig_img.copy()

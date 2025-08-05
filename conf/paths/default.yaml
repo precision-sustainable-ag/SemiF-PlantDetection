@@ -28,6 +28,8 @@ train:
 evaluate:
   data_yaml: ${paths.train.model_data_dir}/data.yaml
   save_dir: ${paths.project_dir}/evaluate
+  nms_results_csv: ${paths.project_dir}/evaluate/nms_benchmark/multi_scale2/metrics/nms_benchmark_all.csv
+  nms_plots_dir: ${paths.project_dir}/evaluate/nms_benchmark//multi_scale2/plots
 
 # path to database
 db_path: ${paths.data_dir}/db/agir.db
