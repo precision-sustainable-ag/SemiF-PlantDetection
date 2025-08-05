@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 class MultiScaleInferencer:
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig) -> None:
         """
         Initialize the MultiScaleInferencer
         """
@@ -133,7 +133,7 @@ class MultiScaleInferencer:
         (candidate / "plots").mkdir()
         return candidate
     
-    def _load_gt_boxes(self, label_path: Path, img_w: int, img_h: int):
+    def _load_gt_boxes(self, label_path: Path, img_w: int, img_h: int) -> torch.Tensor:
         """Reads YOLO format labels and converts to [x1,y1,x2,y2,class]."""
         labels = torch.tensor([list(map(float, line.split())) for line in open(label_path)], dtype=torch.float32)
         if labels.numel() == 0:
@@ -144,7 +144,7 @@ class MultiScaleInferencer:
         cls = labels[:, 0:1]
         return torch.cat([x1.unsqueeze(1), y1.unsqueeze(1), x2.unsqueeze(1), y2.unsqueeze(1), cls], dim=1)
     
-    def _evaluate_nms(self, preds: torch.Tensor, gts: torch.Tensor, iou_threshold=0.5):
+    def _evaluate_nms(self, preds: torch.Tensor, gts: torch.Tensor, iou_threshold=0.5) -> tuple[int, int, int, float, float, float]:
         """Compare predictions with ground truth boxes and return TP, FP, FN, precision, recall, F1."""
         device = preds.device
         gts = gts.to(device)
@@ -168,7 +168,7 @@ class MultiScaleInferencer:
 
         return tp, fp, fn, precision, recall, f1
 
-    def run(self):
+    def run(self) -> None:
         images = sorted(list(self.source_folder.glob("*.jpg")) + list(self.source_folder.glob("*.png")))
         if not images:
             raise FileNotFoundError(f"No images found in {self.source_folder}")
@@ -207,7 +207,7 @@ class MultiScaleInferencer:
                     self.total_nms_time = 0.0
 
 
-    def _run_multi_gpu(self, images, save_dir):
+    def _run_multi_gpu(self, images, save_dir) -> None:
         manager = Manager()
         shared_metrics = manager.list()
         shared_time = manager.Value('d', 0.0)
@@ -234,7 +234,7 @@ class MultiScaleInferencer:
         self.total_nms_time = shared_time.value
         log.info(f"Multiscale inference completed on {self.num_gpus} GPUs.")
 
-    def _worker(self, gpu_id, images, save_dir, shared_metrics, shared_time):
+    def _worker(self, gpu_id, images, save_dir, shared_metrics, shared_time) -> None:
         logging.basicConfig(
             level=logging.INFO,
             format=f"[GPU {gpu_id}][%(processName)s][%(levelname)s] - %(message)s"
@@ -249,7 +249,7 @@ class MultiScaleInferencer:
 
         log.info(f"GPU {gpu_id}: Done.")
 
-    def _process_image(self, img_path, model, device, save_dir, shared_metrics, shared_time):
+    def _process_image(self, img_path, model, device, save_dir, shared_metrics, shared_time) -> None:
         """
         Process a single image at multiple scales, perform inference, apply NMS, evaluate against GT, and save results.
 
@@ -340,7 +340,7 @@ class MultiScaleInferencer:
         out_path = save_dir / "images" / f"{img_path.stem}_{self.current_method}.jpg"
         self.save_side_by_side(orig_img, all_preds, final_preds, out_path.parent, out_path.name)
 
-    def save_side_by_side(self, orig_img, pre_preds, post_preds, save_dir, out_filename):
+    def save_side_by_side(self, orig_img, pre_preds, post_preds, save_dir, out_filename) -> None:
         """Draws Pre-NMS (blue) and Post-NMS (red) boxes and saves them side by side with thicker lines and bigger text."""
         
         def draw_boxes(img, preds, color):
@@ -365,7 +365,7 @@ class MultiScaleInferencer:
         cv2.imwrite(str(out_path), combined)
         log.info(f"Saved side-by-side visualization: {out_path}")
 
-    def annotate_and_save(self, orig_img, preds, save_dir, out_filename):
+    def annotate_and_save(self, orig_img, preds, save_dir, out_filename) -> None:
         annotated = orig_img.copy()
         model = YOLO(self.model_path)
         valid_preds = [b for b in preds if int(b[5]) in model.names]
@@ -383,6 +383,6 @@ class MultiScaleInferencer:
         log.info(f"Saved: {out_path}")
 
 
-def main(cfg: DictConfig):
+def main(cfg: DictConfig) -> None:
     inferencer = MultiScaleInferencer(cfg)
     inferencer.run()

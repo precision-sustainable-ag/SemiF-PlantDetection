@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 
 class NMSVisualizer:
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         """
         Initialize NMSVisualizer.
         Uses cfg.paths.evaluate.save_dir to locate the latest multi_scale directory.
@@ -46,7 +46,7 @@ class NMSVisualizer:
         log.info(f"Resolved latest multi_scale directory: {latest}")
         return latest
 
-    def plot_nms_visualizations(self):
+    def plot_nms_visualizations(self) -> None:
         """Generate visualization plots for NMS benchmark results."""
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -204,7 +204,7 @@ class NMSVisualizer:
         log.info("All NMS visualizations saved to %s", self.output_dir)
 
 
-def main(cfg):
+def main(cfg) -> None:
     """
     Entry point for Hydra.
     Automatically finds the latest multi_scale directory and generates plots.
