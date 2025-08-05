@@ -37,17 +37,32 @@ def plot_nms_visualizations(csv_path: str, output_dir: str):
                     })
                     .sort_values("f1", ascending=False))
 
+    # Compute mAP(50) and mAP(50-95) from CSV precision
+    map50 = df[df['iou'] == 0.5].groupby('method')['precision'].mean()
+    map5095 = df[df['iou'].isin([0.5, 0.6, 0.7, 0.8])].groupby('method')['precision'].mean()
+
+    # Add to aggregated method table
+    agg_method['map_50'] = map50
+    agg_method['map_50_95'] = map5095
+
     log.info("\n=== Grand-Mean Ranking ===\n%s", agg_method.round(3))
 
-    # global stats bar-plots (zoomed)
-    for metric in ["f1", "precision", "recall", "nms_time_ms"]:
+    # Plot global stats bar-plots (including mAP metrics)
+    for metric in ["f1", "precision", "recall", "nms_time_ms", "map_50", "map_50_95"]:
         order = agg_method.index if metric != "nms_time_ms" else agg_method.sort_values(metric).index
         min_val = agg_method[metric].min()
         max_val = agg_method[metric].max()
         pad = (max_val - min_val) * 0.1
 
         plt.figure(figsize=(6, 4))
-        sns.barplot(x=agg_method.loc[order][metric], y=order, hue=order, dodge=False, legend=False, palette="viridis")
+        sns.barplot(
+            x=agg_method.loc[order][metric],
+            y=order,
+            hue=order,
+            dodge=False,
+            legend=False,
+            palette="viridis"
+        )
         plt.xlim(min_val - pad, max_val + pad)
         plt.title(f"Mean {metric.upper()} by Method (Zoomed)")
         plt.xlabel(metric.upper())
@@ -132,16 +147,18 @@ def plot_nms_visualizations(csv_path: str, output_dir: str):
     plt.savefig(f"{output_dir}/scatter_speed_f1.png")
     plt.close()
 
-    # combined heatmaps for F1 and Precision
-    metrics_to_plot = ["f1", "precision"]
-    for metric in metrics_to_plot:
+    # Combined heatmaps for F1, Precision, and mAP metrics
+    for metric in ["f1", "precision", "map_50", "map_50_95"]:
         methods = agg_3d['method'].unique()
         n_methods = len(methods)
-        cmap = "YlGnBu" if metric == "f1" else "Oranges"
+        cmap = "YlGnBu" if metric in ["f1", "map_50", "map_50_95"] else "Oranges"
         fig, axes = plt.subplots(1, n_methods, figsize=(4 * n_methods, 4), sharey=True)
         for ax, m in zip(axes, methods):
-            pivot = agg_3d[agg_3d.method == m].pivot(index="iou", columns="conf", values=metric)
-            sns.heatmap(pivot, annot=True, fmt=".2f", cmap=cmap, cbar_kws={"label": metric.upper()}, ax=ax)
+            if metric in agg_3d.columns:
+                pivot = agg_3d[agg_3d.method == m].pivot(index="iou", columns="conf", values=metric)
+            else:
+                continue
+            sns.heatmap(pivot, annot=True, fmt=".3f", cmap=cmap, cbar_kws={"label": metric.upper()}, ax=ax)
             ax.set_title(m)
             ax.set_xlabel("Confidence")
             ax.set_ylabel("IoU")
