@@ -2,21 +2,50 @@ tasks:
   - prepare_dataset
   - train_model
 
+# model
 model_name: yolo11n.pt
-epochs: 3
-image_size: 512
-batch_size: 4
-num_workers: 18
-device: "1" # TODO: implement GPUtils for automatic selection of GPUs
+train_from_checkpoint: true
 
+# dataset splits
 random_seed: 42
 validation_split: 0.2
 test_split: 0.1
-parallel: true
-parallel_workers: 16
 
 prepare_dataset:
   remove_after_split: false # removes images and annotations after creating train/val/test splits
   ignore_non_targets: true # filters annotations to ignore non-targets
- 
-train_from_checkpoint: true
+
+# training hyperparameters
+epochs: 300
+image_size: 2880
+batch_size: 8
+num_workers: 16
+lr0: 0.001
+weight_decay: 0.001
+warmup_epochs: 3
+patience: 50
+cache: true
+
+# augmentations
+flipud: 0.5
+fliplr: 0.5
+mosaic: 0.5
+scale: 0.2
+shear: 0.0
+degrees: 0.0
+perspective: 0.0
+translate: 0.1
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+
+# gpu configs
+device: "5, 6, 7, 8"
+
+gpus:
+  n: 4
+  exclude_id: 0
+
+parallel: true
+parallel_workers: 16
+

@@ -16,4 +16,4 @@ gpus:
   n: 3          # number of GPUs to use
   exclude_id: 0 # skip first GPU
 
-nms_method: [custom, ultralytics, soft, merge, matrix]
+nms_method: ultralytics

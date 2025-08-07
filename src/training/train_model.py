@@ -81,29 +81,40 @@ class TrainModel:
             log.info(f"Starting fresh from model_name: {checkpoint}")
 
         model = YOLO(checkpoint)
-        
-        # Train the model
+
+        # Ensure model is trainable
+        model.model.train()
+        for p in model.model.parameters():
+            p.requires_grad = True
+
+        trainable = sum(p.numel() for p in model.model.parameters() if p.requires_grad)
+        log.info(f"Trainable parameters: {trainable:,}")
+
         results = model.train(
             data=str(self.yaml_path),
             epochs=self.cfg.train.epochs,
             imgsz=self.cfg.train.image_size,
             batch=self.cfg.train.batch_size,
-            # workers=self.cfg.train.num_workers,
-            device=self.cfg.train.device if torch.cuda.is_available() else 'cpu',
-            # device='cpu',
+            device = self.cfg.train.device if torch.cuda.is_available() else 'cpu',
             project=str(self.output_dir),
             name='run',
             save=True,
-            # patience=self.cfg.train.patience,
-            # lr0=self.cfg.train.lr,
-            # weight_decay=self.cfg.train.weight_decay
-            flipud=0.5,
-            fliplr=0.5,
-            mosaic=0,
-            scale=0.2,
-            shear=0,
-            degrees=0,
-            perspective=0
+            flipud=self.cfg.train.flipud,
+            fliplr=self.cfg.train.fliplr,
+            mosaic=self.cfg.train.mosaic,
+            scale=self.cfg.train.scale,
+            shear=self.cfg.train.shear,
+            degrees=self.cfg.train.degrees,
+            perspective=self.cfg.train.perspective,
+            translate=self.cfg.train.translate,
+            hsv_h=self.cfg.train.hsv_h,
+            hsv_s=self.cfg.train.hsv_s,
+            hsv_v=self.cfg.train.hsv_v,
+            lr0=self.cfg.train.lr0,
+            weight_decay=self.cfg.train.weight_decay,
+            warmup_epochs=self.cfg.train.warmup_epochs,
+            patience=self.cfg.train.patience,
+            cache=self.cfg.train.cache,
         )
         
         # Save the model
