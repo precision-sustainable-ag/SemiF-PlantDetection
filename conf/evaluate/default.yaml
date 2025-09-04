@@ -31,6 +31,11 @@ conf: 0.35           # final_conf
 iou: 0.65            # final_iou
 final_max_det: 500
 
+# Optional extra NMS right after WBF (before Ultralytics NMS)
+post_fusion_nms:
+  enabled: false   # set true to turn it on
+  iou: 0.60        # IoU threshold for batched_nms
+
 # Visualization
 draw_labels: true
 draw_boxes: true

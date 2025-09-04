@@ -300,26 +300,31 @@ class YOLOMultiscalePredictor:
         self.save_dir = save_dir
         self.device = device
 
-        # Inference knobs
+        # Inference knobs (all required in cfg.evaluate)
         ev = cfg.evaluate
-        self.base_imgsz = int(getattr(ev, "base_imgsz", 4000))
-        self.scales = tuple(float(s) for s in getattr(ev, "scales", [0.15, 0.25, 0.5, 1.0, 1.5]))
 
-        self.per_scale_conf = float(getattr(ev, "per_scale_conf", 0.0))
-        self.per_scale_iou = float(getattr(ev, "per_scale_iou", 1.0))
-        self.per_scale_max_det = int(getattr(ev, "per_scale_max_det", 300))
+        self.base_imgsz         = int(ev.base_imgsz)
+        self.scales             = tuple(float(s) for s in ev.scales)
 
-        self.final_conf = float(getattr(ev, "conf", 0.75))
-        self.final_iou = float(getattr(ev, "iou", 0.55))
-        self.final_max_det = int(getattr(ev, "final_max_det", 500))
+        self.per_scale_conf     = float(ev.per_scale_conf)
+        self.per_scale_iou      = float(ev.per_scale_iou)
+        self.per_scale_max_det  = int(ev.per_scale_max_det)
 
-        # Viz knobs
-        self.draw_labels = bool(getattr(ev, "draw_labels", True))
-        self.draw_boxes = bool(getattr(ev, "draw_boxes", True))
-        self.draw_conf = bool(getattr(ev, "draw_conf", True))
-        self.line_width = int(getattr(ev, "line_width", 5))
-        self.font_size = float(getattr(ev, "font_size", 4.0))
-        self.names = getattr(ev, "names", None)
+        self.final_conf         = float(ev.conf)
+        self.final_iou          = float(ev.iou)
+        self.final_max_det      = int(ev.final_max_det)
+
+        pf = ev.post_fusion_nms
+        self.post_fusion_nms_enabled = bool(pf.enabled)
+        self.post_fusion_nms_iou     = float(pf.iou)
+
+        # Visualization knobs (all required)
+        self.draw_labels        = bool(ev.draw_labels)
+        self.draw_boxes         = bool(ev.draw_boxes)
+        self.draw_conf          = bool(ev.draw_conf)
+        self.line_width         = int(ev.line_width)
+        self.font_size          = float(ev.font_size)
+        self.names              = ev.names
 
         # Model
         self.model = YOLO(str(self.model_path))
@@ -367,6 +372,18 @@ class YOLOMultiscalePredictor:
                     boxes, scores, clses, iou_thr=0.65, score_power=1.0, conf_type="max"
                 )
             log.info(f"  {len(merged)} boxes after WBF")
+
+            # Optional third-tier NMS
+            if self.post_fusion_nms_enabled and merged.numel():
+                # torchvision expects integer group indices for class labels
+                keep = batched_nms(
+                    merged[:, :4],                  # boxes [N,4]
+                    merged[:, 4],                   # scores [N]
+                    merged[:, 5].to(torch.int64),   # class indices [N] as int64
+                    iou_threshold=self.post_fusion_nms_iou,
+                )
+                merged = merged[keep]
+                log.info(f"  {len(merged)} boxes after extra NMS")
 
             results, _raw = self._postprocess_det(merged, im0, path)
             log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
