@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,32 +15,30 @@ import numpy as np
 import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf
-from torchvision.ops import batched_nms
 from ultralytics import YOLO
 from ultralytics.data.build import check_source
 from ultralytics.data.loaders import LoadImagesAndVideos, SourceTypes
 from ultralytics.engine.results import Results
 from ultralytics.utils import ops
 
-from src.utils.utils import get_latest_checkpoint  # your helper
+from torchvision.ops import batched_nms
+from hydra.utils import get_original_cwd
+from src.utils.utils import get_latest_checkpoint
+
+log = logging.getLogger(__name__)
 
 # ------------------------------- Config ---------------------------------------
 
-
 def _to_abs(p: Path) -> Path:
     """Make `p` absolute using Hydra's original CWD when needed."""
-    from hydra.utils import get_original_cwd
-
     p = Path(p)
     return p if p.is_absolute() else Path(get_original_cwd()) / p
-
 
 def pick_best_device(min_free_gb: float = 8.0, exclude: list[int] | None = None) -> str:
     """
     Choose among *logical* CUDA devices exposed by CUDA_VISIBLE_DEVICES.
     Avoid GPUtil physical IDs to prevent invalid device ordinal errors.
     """
-    log = logging.getLogger(__name__)
     if not torch.cuda.is_available():
         log.info("CUDA not available; using CPU")
         return "cpu"
@@ -90,39 +89,7 @@ def pick_best_device(min_free_gb: float = 8.0, exclude: list[int] | None = None)
     log.info(f"CUDA_VISIBLE_DEVICES={vis} | logical_count={n} | picked cuda:{chosen}")
     return f"cuda:{chosen}"
 
-
-@dataclass
-class InferenceConfig:
-    model_path: Path
-    source: Path
-    save_dir: Path
-    device: str = "cuda:0"
-    base_imgsz: int = 4000
-    scales: Tuple[float, ...] = (0.15, 0.25, 0.5, 1.0, 1.5)
-
-    # Keep-everything per-scale; do the single post-NMS later
-    per_scale_conf: float = 0.0
-    per_scale_iou: float = 1.0
-    per_scale_max_det: int = 300
-
-    # Final postprocess NMS settings (mapped from evaluate.conf / evaluate.iou)
-    final_conf: float = 0.75
-    final_iou: float = 0.55
-    final_max_det: int = 500
-
-    # Visualization
-    draw_labels: bool = True
-    draw_boxes: bool = True
-    draw_conf: bool = True
-    line_width: int = 5
-    font_size: float = 4.0
-
-    # Optional class name map; uses model.names if None
-    names: Optional[dict[int, str]] = field(default=None)
-
-
 # ------------------------------- Geometry -------------------------------------
-
 
 def iou_xyxy(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     tl = torch.max(a[:, None, :2], b[None, :, :2])
@@ -203,148 +170,7 @@ def weighted_boxes_fusion(
     out_labels = torch.stack(out_labels).to(device)
     return torch.cat([out_boxes, out_scores[:, None], out_labels[:, None]], dim=1)
 
-
-# ------------------------------- Predictor ------------------------------------
-
-
-class YOLOMultiscalePredictor:
-    """
-    Multiscale predictor for Ultralytics YOLO (v8/v11).
-    Strategy:
-      - Run predict() at multiple imgsz values with conf=0, iou=1 (keep all)
-      - Concatenate all detections (already mapped to original image coords)
-      - (Optional) WBF fuse duplicates
-      - Run exactly ONE class-aware NMS in postprocess
-      - Visualize & save
-    """
-
-    def __init__(self, cfg: InferenceConfig):
-        self.cfg = cfg
-        self.model = YOLO(str(cfg.model_path))
-        self.model.to(cfg.device)
-        self.model.fuse()
-
-        try:
-            self.names = cfg.names or self.model.names
-        except Exception:
-            self.names = cfg.names or {}
-
-        self._setup_logging()
-        self.cfg.save_dir.mkdir(parents=True, exist_ok=True)
-
-    def run(self) -> None:
-        source, stream, screenshot, from_img, in_memory, tensor = check_source(self.cfg.source)
-        source_type = source.source_type if in_memory else SourceTypes(stream, screenshot, from_img, tensor)
-
-        dataset = LoadImagesAndVideos(path=source, batch=1, channels=3)
-        setattr(dataset, "source_type", source_type)
-
-        for batch in dataset:
-            paths, im0s_list, _info = batch
-            path = Path(paths[0])
-            im0 = im0s_list[0]
-
-            self.log.debug(f"Inferencing: {path}")
-            merged = self._multiscale_raw_preds(im0)
-
-            self.log.info(f"  {len(merged)} boxes before fusion")
-            if merged.numel():
-                boxes, scores, clses = merged[:, :4], merged[:, 4], merged[:, 5]
-                merged = weighted_boxes_fusion(
-                    boxes, scores, clses, iou_thr=0.65, score_power=1.0, conf_type="max"
-                )
-            self.log.info(f"  {len(merged)} boxes after fusion")
-
-            results, _raw = self._postprocess_det(merged, im0, path)
-            self.log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
-            self._save_visualizations(results, path)
-            del results, merged, _raw
-
-    @torch.no_grad()
-    def _multiscale_raw_preds(self, im0: np.ndarray) -> torch.Tensor:
-        outs: List[torch.Tensor] = []
-        for s in self.cfg.scales:
-            imgsz = max(32, int(round(self.cfg.base_imgsz * float(s))))
-            r = self.model.predict(
-                source=im0,
-                imgsz=imgsz,
-                conf=self.cfg.per_scale_conf,
-                iou=self.cfg.per_scale_iou,
-                max_det=self.cfg.per_scale_max_det,
-                verbose=False,
-                device=self.cfg.device,
-            )[0]
-
-            if r.boxes is None or len(r.boxes) == 0:
-                continue
-
-            outs.append(
-                torch.cat(
-                    [
-                        r.boxes.xyxy.detach().cpu(),
-                        r.boxes.conf[:, None].detach().cpu(),
-                        r.boxes.cls[:, None].detach().cpu(),
-                    ],
-                    dim=1,
-                )
-            )
-
-        if not outs:
-            return torch.zeros((0, 6), dtype=torch.float32)
-        return torch.cat(outs, dim=0)
-
-    def _postprocess_det(
-        self,
-        merged_xyxy_conf_cls: torch.Tensor,
-        orig_img: np.ndarray,
-        path: Path,
-        classes: Optional[Sequence[int]] = None,
-    ) -> Tuple[List[Results], List[torch.Tensor]]:
-        if merged_xyxy_conf_cls is None or merged_xyxy_conf_cls.numel() == 0:
-            preds_in = torch.zeros((1, 0, 6), dtype=torch.float32)
-        else:
-            preds_in = merged_xyxy_conf_cls[None, ...].float()
-
-        filtered = ops.non_max_suppression(
-            preds_in,
-            conf_thres=self.cfg.final_conf,
-            iou_thres=self.cfg.final_iou,
-            classes=list(classes) if classes is not None else None,
-            agnostic=False,
-            max_det=self.cfg.final_max_det,
-        )
-
-        out = filtered[0]
-        results = [Results(boxes=out, orig_img=orig_img, path=str(path), names=self.names)]
-        return results, [out]
-
-    def _save_visualizations(self, results: Iterable[Results], path: Path) -> None:
-        out_path = self.cfg.save_dir / path.name
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        for res in results:
-            plot_img = res.plot(
-                labels=self.cfg.draw_labels,
-                boxes=self.cfg.draw_boxes,
-                conf=self.cfg.draw_conf,
-                line_width=self.cfg.line_width,
-                font_size=self.cfg.font_size,
-            )
-            cv2.imwrite(str(out_path), plot_img)
-            self.log.info(f"Saved: {out_path}")
-
-    def _setup_logging(self) -> None:
-        self.log = logging.getLogger("YOLOMultiscalePredictor")
-        if not self.log.handlers:
-            handler = logging.StreamHandler()
-            fmt = logging.Formatter("[%(asctime)s][%(name)s][%(levelname)s] - %(message)s")
-            handler.setFormatter(fmt)
-            self.log.addHandler(handler)
-            self.log.setLevel(logging.INFO)
-
-
 # ------------------------- Hydra helpers (resolvers) --------------------------
-
 
 def _resolve_checkpoint(cfg: DictConfig, model_dir: Path) -> Path:
     """
@@ -405,71 +231,242 @@ def _resolve_test_images(cfg: DictConfig) -> Path:
 
     return test_path
 
-
-def _make_infer_cfg(cfg: DictConfig) -> InferenceConfig:
+def _next_available_subdir(base: Path, stem: str = "multi_scale") -> Path:
     """
-    Build InferenceConfig from Hydra cfg.
+    Return base/stem if it doesn't exist; otherwise base/stem{N} with the
+    smallest N>=2 that doesn't exist.
     """
-    model_dir = _to_abs(Path(cfg.paths.train.model_dir))  # expects cfg.paths.train.model_dir
-    model_path = _resolve_checkpoint(cfg, model_dir=model_dir)
-    source = _resolve_test_images(cfg)
+    first = base / stem
+    if not first.exists():
+        return first
 
-    # save_dir may come from cfg; default to <test>/results/ms_infer
+    # Find max existing numeric suffix
+    pat = re.compile(rf"^{re.escape(stem)}(\d+)$")
+    max_n = 1
+    for d in base.iterdir():
+        if d.is_dir():
+            m = pat.fullmatch(d.name)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+    return base / f"{stem}{max_n + 1}"
+
+
+def _resolve_save_dir(cfg: DictConfig, source: Path) -> Path:
+    # Base of the evaluate save dir
     if "paths" in cfg and "evaluate" in cfg.paths and "save_dir" in cfg.paths.evaluate:
         base = _to_abs(Path(cfg.paths.evaluate.save_dir))
     else:
-        save_dir = source / "results" / "ms_infer"
+        base = source / "results" / "ms_infer"
 
-    save_dir = base / "new_ms_inferencing" / "images"
+    run_root = _next_available_subdir(base, stem="multi_scale")
+    return run_root / "images"
 
-    # GPU selection
-    exclude = []
-    if "evaluate" in cfg and "gpus" in cfg.evaluate:
-        ex = getattr(cfg.evaluate.gpus, "exclude_id", None)
-        if ex is not None:
-            exclude = [ex]
-    device = pick_best_device(min_free_gb=10.0, exclude=exclude)
+# ------------------------------- Predictor ------------------------------------
 
-    # map thresholds: final_* come from evaluate.conf / evaluate.iou
-    final_conf = float(cfg.evaluate.conf)
-    final_iou = float(cfg.evaluate.iou)
-    scales = tuple(float(s) for s in cfg.evaluate.scales)
+class YOLOMultiscalePredictor:
+    """
+    Multiscale predictor for Ultralytics YOLO (v8/v11).
+    Strategy:
+      - Run predict() at multiple imgsz values with conf=0, iou=1 (keep all)
+      - Concatenate all detections (already mapped to original image coords)
+      - (Optional) WBF fuse duplicates
+      - Run exactly ONE class-aware NMS in postprocess
+      - Visualize & save
+    """
+    def __init__(self, cfg: DictConfig):
+        self.cfg = cfg
 
-    return InferenceConfig(
-        model_path=model_path,
-        source=source,
-        save_dir=save_dir,
-        device=device,
-        base_imgsz=4000,
-        scales=scales,
-        per_scale_conf=0.0,
-        per_scale_iou=1.0,
-        per_scale_max_det=300,
-        final_conf=final_conf,
-        final_iou=final_iou,
-        final_max_det=500,
-    )
+        # Resolve model + source + save dir
+        model_dir = _to_abs(Path(cfg.paths.train.model_dir))
+        model_path = _resolve_checkpoint(cfg, model_dir=model_dir)
+        source = _resolve_test_images(cfg)
+        save_dir = _resolve_save_dir(cfg, source)
 
+        # Device
+        user_device = getattr(cfg.evaluate, "device", "auto")
+        if isinstance(user_device, str) and user_device.lower() == "auto":
+            ex = []
+            if "evaluate" in cfg and "gpus" in cfg.evaluate:
+                ex_id = getattr(cfg.evaluate.gpus, "exclude_id", None)
+                if ex_id is not None:
+                    ex = [ex_id]
+            device = pick_best_device(min_free_gb=10.0, exclude=ex)
+        else:
+            device = user_device
+
+        # Store runtime fields
+        self.model_path = model_path
+        self.source = source
+        self.save_dir = save_dir
+        self.device = device
+
+        # Inference knobs
+        ev = cfg.evaluate
+        self.base_imgsz = int(getattr(ev, "base_imgsz", 4000))
+        self.scales = tuple(float(s) for s in getattr(ev, "scales", [0.15, 0.25, 0.5, 1.0, 1.5]))
+
+        self.per_scale_conf = float(getattr(ev, "per_scale_conf", 0.0))
+        self.per_scale_iou = float(getattr(ev, "per_scale_iou", 1.0))
+        self.per_scale_max_det = int(getattr(ev, "per_scale_max_det", 300))
+
+        self.final_conf = float(getattr(ev, "conf", 0.75))
+        self.final_iou = float(getattr(ev, "iou", 0.55))
+        self.final_max_det = int(getattr(ev, "final_max_det", 500))
+
+        # Viz knobs
+        self.draw_labels = bool(getattr(ev, "draw_labels", True))
+        self.draw_boxes = bool(getattr(ev, "draw_boxes", True))
+        self.draw_conf = bool(getattr(ev, "draw_conf", True))
+        self.line_width = int(getattr(ev, "line_width", 5))
+        self.font_size = float(getattr(ev, "font_size", 4.0))
+        self.names = getattr(ev, "names", None)
+
+        # Model
+        self.model = YOLO(str(self.model_path))
+        try:
+            self.model.to(self.device)
+        except Exception as e:
+            log.warning(f"Failed to move model to {self.device}: {e}; retrying on cuda:0 then cpu")
+            try:
+                self.model.to("cuda:0")
+                self.device = "cuda:0"
+            except Exception:
+                self.model.to("cpu")
+                self.device = "cpu"
+
+        self.model.fuse()
+        if self.names is None:
+            try:
+                self.names = self.model.names
+            except Exception:
+                self.names = {}
+
+        # FS
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        log.info(f"Saving predictions to: {self.save_dir}")
+
+    def run(self) -> None:
+        source, stream, screenshot, from_img, in_memory, tensor = check_source(self.source)
+        source_type = source.source_type if in_memory else SourceTypes(stream, screenshot, from_img, tensor)
+
+        dataset = LoadImagesAndVideos(path=source, batch=1, channels=3)
+        setattr(dataset, "source_type", source_type)
+
+        for batch in dataset:
+            paths, im0s_list, _info = batch
+            path = Path(paths[0])
+            im0 = im0s_list[0]
+
+            log.debug(f"Inferencing: {path}")
+            merged = self._multiscale_raw_preds(im0)
+
+            log.info(f"  {len(merged)} boxes before WBF")
+            if merged.numel():
+                boxes, scores, clses = merged[:, :4], merged[:, 4], merged[:, 5]
+                merged = weighted_boxes_fusion(
+                    boxes, scores, clses, iou_thr=0.65, score_power=1.0, conf_type="max"
+                )
+            log.info(f"  {len(merged)} boxes after WBF")
+
+            results, _raw = self._postprocess_det(merged, im0, path)
+            log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
+            self._save_visualizations(results, path)
+
+    @torch.no_grad()
+    def _multiscale_raw_preds(self, im0: np.ndarray) -> torch.Tensor:
+        outs: List[torch.Tensor] = []
+        for s in self.scales:
+            imgsz = max(32, int(round(self.base_imgsz * float(s))))
+            r = self.model.predict(
+                source=im0,
+                imgsz=imgsz,
+                conf=self.per_scale_conf,
+                iou=self.per_scale_iou,
+                max_det=self.per_scale_max_det,
+                verbose=False,
+                device=self.device,
+            )[0]
+
+            if r.boxes is None or len(r.boxes) == 0:
+                continue
+
+            outs.append(
+                torch.cat(
+                    [
+                        r.boxes.xyxy.detach().cpu(),
+                        r.boxes.conf[:, None].detach().cpu(),
+                        r.boxes.cls[:, None].detach().cpu(),
+                    ],
+                    dim=1,
+                )
+            )
+
+        if not outs:
+            return torch.zeros((0, 6), dtype=torch.float32)
+        return torch.cat(outs, dim=0)
+
+    def _postprocess_det(
+        self,
+        merged_xyxy_conf_cls: torch.Tensor,
+        orig_img: np.ndarray,
+        path: Path,
+        classes: Optional[Sequence[int]] = None,
+    ) -> Tuple[List[Results], List[torch.Tensor]]:
+        if merged_xyxy_conf_cls is None or merged_xyxy_conf_cls.numel() == 0:
+            preds_in = torch.zeros((1, 0, 6), dtype=torch.float32)
+        else:
+            preds_in = merged_xyxy_conf_cls[None, ...].float()
+
+        filtered = ops.non_max_suppression(
+            preds_in,
+            conf_thres=self.final_conf,
+            iou_thres=self.final_iou,
+            classes=list(classes) if classes is not None else None,
+            agnostic=False,
+            max_det=self.final_max_det,
+        )
+
+        out = filtered[0]
+        results = [Results(boxes=out, orig_img=orig_img, path=str(path), names=self.names)]
+        return results, [out]
+
+    def _save_visualizations(self, results: Iterable[Results], path: Path) -> None:
+        out_path = self.save_dir / path.name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for res in results:
+            plot_img = res.plot(
+                labels=self.draw_labels,
+                boxes=self.draw_boxes,
+                conf=self.draw_conf,
+                line_width=self.line_width,
+                font_size=self.font_size,
+            )
+            cv2.imwrite(str(out_path), plot_img)
+            log.info(f"Saved: {out_path}")
 
 # --------------------------------- CLI ----------------------------------------
 
 
-@hydra.main(version_base=None, config_path="conf/evaluate", config_name="default")
-def main(cfg: DictConfig) -> None:
-    """
-    Hydra entrypoint. Expects your file at conf/evaluate/default.yaml with fields:
-      evaluate: { conf, iou, scales, gpus: { n, exclude_id }, custom_path, run_version, split, save_json }
-      paths:
-        train: { model_dir: ... }
-        evaluate: { data_yaml: ..., save_dir: ... }
-    """
-    logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(levelname)s] - %(message)s")
-    logging.getLogger(__name__).info("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
+def _ensure_task_logger():
+    if not log.hasHandlers():
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter(
+            "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"
+        ))
+        log.addHandler(h)
+        log.propagate = False
 
-    infer_cfg = _make_infer_cfg(cfg)
-    predictor = YOLOMultiscalePredictor(infer_cfg)
+    if log.level == logging.NOTSET:
+        log.setLevel(logging.INFO)
+
+def main(cfg: DictConfig):
+    _ensure_task_logger()
+    log.info("Config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
+    log.info("Starting multiscale inference task (new_ms_inferencing)")
+    predictor = YOLOMultiscalePredictor(cfg)
     predictor.run()
-
+    log.info("Finished multiscale inference task")
 
 if __name__ == "__main__":
     main()

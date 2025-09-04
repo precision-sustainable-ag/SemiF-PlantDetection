@@ -1,5 +1,5 @@
 tasks:
-  - evaluate_model
+  # - evaluate_model
   # - benchmark_nms
   # - visualize_nms
   - new_ms_inferencing
@@ -9,12 +9,42 @@ save_json: true
 run_version: 1 # looks in runs_1; is ignored if custom_path is provided
 custom_path: /home/ajajoo3/SemiF-PlantDetection/new_training_best.pt # Provide a custom model path, if provided, ignores run_version
 
-conf: 0.35
-iou: 0.65
-scales: [0.15, 0.25, 0.5, 1, 1.5] # multiscale inference scales
+# Device selection
+# - "auto": pick best visible GPU
+# - or set explicit device string: "cuda:0" / "cpu"
+device: auto
 
+# Base image size used for scale factors below
+base_imgsz: 4000
+
+# Multiscale inference scales
+scales: [0.15, 0.25, 0.5, 1.0, 1.5]
+
+# Per-scale filtering 
+per_scale_conf: 0.0
+per_scale_iou: 1.0
+per_scale_max_det: 300
+
+# Final postprocess thresholds (single NMS after concatenation)
+# These map to Ultralytics' conf/iou
+conf: 0.35           # final_conf
+iou: 0.65            # final_iou
+final_max_det: 500
+
+# Visualization
+draw_labels: true
+draw_boxes: true
+draw_conf: true
+line_width: 5
+font_size: 4.0
+
+# Optional class name map (use model.names if null)
+names: null
+
+# GPU policy for AUTO picker (logical indices after CUDA_VISIBLE_DEVICES)
 gpus:
-  n: 4          # number of GPUs to use
-  exclude_id: 0 # skip first GPU
+  n: 4
+  exclude_id: 0
 
+# NMS backend (kept for parity with your other evaluate tasks)
 nms_method: ultralytics
