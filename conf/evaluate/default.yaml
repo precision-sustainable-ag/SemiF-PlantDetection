@@ -27,7 +27,7 @@ per_scale_max_det: 300
 
 # Final postprocess thresholds (single NMS after concatenation)
 # These map to Ultralytics' conf/iou
-conf: 0.35           # final_conf
+conf: 0.85           # final_conf
 iou: 0.65            # final_iou
 final_max_det: 500
 
@@ -42,6 +42,14 @@ draw_boxes: true
 draw_conf: true
 line_width: 5
 font_size: 4.0
+
+# --- label-based evaluation ---
+eval_labels:
+  enabled: true              # required
+  iou_thresholds: [0.50]     # or [0.50,0.55,...,0.95] for COCO-style mAP
+  per_image: false           # true = also log per-image precision/recall
+  labels_dir: null
+  save_json: true            # write metrics JSON next to the images/ folder
 
 # Optional class name map (use model.names if null)
 names: null

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import re
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import os
+import json
 import cv2
 import GPUtil
 import hydra
@@ -261,6 +263,196 @@ def _resolve_save_dir(cfg: DictConfig, source: Path) -> Path:
     run_root = _next_available_subdir(base, stem="multi_scale")
     return run_root / "images"
 
+# ------------------------------- Eval helpers ------------------------------------
+
+def _label_path_from_image_path(img_path: Path, test_root: Path, labels_root: Optional[Path]) -> Path:
+    """
+    Resolve YOLO label .txt path corresponding to an image.
+    Priority:
+      1) If labels_root provided: labels_root / relpath(img, test_root) with .txt
+      2) Else: swap first 'images' segment -> 'labels' and change suffix to .txt
+    """
+    img_path = img_path.resolve()
+    test_root = test_root.resolve()
+    if labels_root:
+        labels_root = labels_root.resolve()
+        rel = img_path.relative_to(test_root)
+        return (labels_root / rel).with_suffix(".txt")
+
+    parts = list(img_path.parts)
+    for i, p in enumerate(parts):
+        if p == "images":
+            parts[i] = "labels"
+            break
+    lbl = Path(*parts).with_suffix(".txt")
+    return lbl
+
+def _read_yolo_labels(txt_path: Path, img_w: int, img_h: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Read YOLO txt -> (boxes_xyxy [G,4], classes [G]).
+    Boxes are in absolute pixel coords.
+    """
+    if not txt_path.exists():
+        return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int64)
+    boxes = []
+    clses = []
+    with open(txt_path, "r") as f:
+        for line in f:
+            s = line.strip().split()
+            if len(s) < 5:
+                continue
+            c = int(float(s[0]))
+            cx, cy, w, h = map(float, s[1:5])
+            # YOLO (normalized center) -> xyxy pixels
+            px = cx * img_w
+            py = cy * img_h
+            pw = w * img_w
+            ph = h * img_h
+            x1 = max(0.0, px - pw / 2)
+            y1 = max(0.0, py - ph / 2)
+            x2 = min(float(img_w), px + pw / 2)
+            y2 = min(float(img_h), py + ph / 2)
+            boxes.append([x1, y1, x2, y2])
+            clses.append(c)
+    if not boxes:
+        return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int64)
+    return np.array(boxes, dtype=np.float32), np.array(clses, dtype=np.int64)
+
+def _iou_xyxy_np(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """NumPy IoU for xyxy boxes. a:[Na,4], b:[Nb,4] -> [Na,Nb]"""
+    if a.size == 0 or b.size == 0:
+        return np.zeros((a.shape[0], b.shape[0]), dtype=np.float32)
+    tl = np.maximum(a[:, None, :2], b[None, :, :2])
+    br = np.minimum(a[:, None, 2:], b[None, :, 2:])
+    wh = np.clip(br - tl, a_min=0.0, a_max=None)
+    inter = wh[..., 0] * wh[..., 1]
+    area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1])
+    area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+    union = area_a[:, None] + area_b[None, :] - inter + 1e-9
+    return inter / union
+
+def _voc_ap(rec: np.ndarray, prec: np.ndarray) -> float:
+    """
+    VOC-style AP (area under P-R curve with 11/continuous interpolation).
+    Here we use the continuous interpolation implementation.
+    """
+    mrec = np.concatenate(([0.0], rec, [1.0]))
+    mpre = np.concatenate(([0.0], prec, [0.0]))
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = max(mpre[i - 1], mpre[i])
+    idx = np.where(mrec[1:] != mrec[:-1])[0]
+    return float(np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]))
+
+# ------------------------------- Evaluator ------------------------------------
+
+class DetectionEvaluator:
+    """
+    Accumulates predictions/ground-truth and computes AP/mAP across IoU thresholds.
+    """
+    def __init__(self, iou_thresholds: Sequence[float], per_image: bool = False):
+        self.iou_thresholds = [float(t) for t in iou_thresholds]
+        self.per_image = per_image
+
+        # preds_by_class[c] = list of dict(image_id, score, box[4])
+        self.preds_by_class = defaultdict(list)
+        # gts_by_image_class[image_id][c] = [box, ...]
+        self.gts_by_image_class = defaultdict(lambda: defaultdict(list))
+        self.num_gt_by_class = defaultdict(int)
+
+        # optional per-image diagnostics
+        self.per_image_stats = {}  # image_id -> dict (filled if per_image=True)
+
+    def add_image(
+        self,
+        image_id: str,
+        pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
+        gt_boxes: np.ndarray, gt_classes: np.ndarray,
+    ):
+        # store gts
+        for c in np.unique(gt_classes):
+            m = (gt_classes == c)
+            b = gt_boxes[m]
+            self.gts_by_image_class[image_id][int(c)].extend(b.tolist())
+            self.num_gt_by_class[int(c)] += int(m.sum())
+
+        # store preds
+        for c in np.unique(pred_classes):
+            m = (pred_classes == c)
+            boxes = pred_boxes[m]
+            scores = pred_scores[m]
+            for box, s in zip(boxes, scores):
+                self.preds_by_class[int(c)].append({"image_id": image_id, "score": float(s), "box": box.tolist()})
+
+        if self.per_image:
+            self.per_image_stats.setdefault(image_id, {"pred": int(len(pred_boxes)), "gt": int(len(gt_boxes))})
+
+    def _compute_ap_for_class(self, c: int, iou_thr: float) -> dict:
+        preds = self.preds_by_class.get(c, [])
+        npos = self.num_gt_by_class.get(c, 0)
+        if npos == 0:
+            return {"AP": np.nan, "precision": [], "recall": []}
+
+        # sort predictions by score desc
+        preds = sorted(preds, key=lambda x: x["score"], reverse=True)
+        tp = np.zeros(len(preds), dtype=np.float32)
+        fp = np.zeros(len(preds), dtype=np.float32)
+
+        # matched gt flags per image
+        matched = {img_id: np.zeros(len(self.gts_by_image_class[img_id].get(c, [])), dtype=bool)
+                   for img_id in self.gts_by_image_class}
+
+        for i, p in enumerate(preds):
+            img_id = p["image_id"]
+            gt_list = self.gts_by_image_class[img_id].get(c, [])
+            gt = np.array(gt_list, dtype=np.float32)
+            box = np.array(p["box"], dtype=np.float32)[None, :]
+
+            if gt.size == 0:
+                fp[i] = 1.0
+                continue
+
+            ious = _iou_xyxy_np(box, gt).squeeze(0)
+            j = int(np.argmax(ious))
+            if ious[j] >= iou_thr and not matched[img_id][j]:
+                tp[i] = 1.0
+                matched[img_id][j] = True
+            else:
+                fp[i] = 1.0
+
+        # precision-recall
+        tp_cum = np.cumsum(tp)
+        fp_cum = np.cumsum(fp)
+        rec = tp_cum / max(npos, 1)
+        prec = np.divide(tp_cum, (tp_cum + fp_cum + 1e-9))
+        ap = _voc_ap(rec, prec)
+        return {"AP": ap, "precision": prec.tolist(), "recall": rec.tolist(), "npos": int(npos)}
+
+    def summarize(self) -> dict:
+        # Compute AP per class per IoU, then mAP
+        classes = sorted(set(list(self.preds_by_class.keys()) + list(self.num_gt_by_class.keys())))
+        results = {"per_class": {}, "mAP": {}}
+
+        for t in self.iou_thresholds:
+            aps = []
+            per_class = {}
+            for c in classes:
+                out = self._compute_ap_for_class(c, iou_thr=t)
+                per_class[str(c)] = {"AP": out["AP"], "npos": out.get("npos", 0)}
+                if not np.isnan(out["AP"]):
+                    aps.append(out["AP"])
+            results["mAP"][f"{t:.2f}"] = float(np.mean(aps)) if aps else float("nan")
+            results["per_class"][f"{t:.2f}"] = per_class
+
+        # macro across thresholds (COCO-style average if multiple thresholds provided)
+        if len(self.iou_thresholds) > 1:
+            results["mAP"]["avg"] = float(np.nanmean([results["mAP"][f"{t:.2f}"] for t in self.iou_thresholds]))
+
+        # Optional per-image stats
+        if self.per_image:
+            results["per_image"] = self.per_image_stats
+
+        return results
+
 # ------------------------------- Predictor ------------------------------------
 
 class YOLOMultiscalePredictor:
@@ -326,6 +518,20 @@ class YOLOMultiscalePredictor:
         self.font_size          = float(ev.font_size)
         self.names              = ev.names
 
+        # Eval labels
+        evl = cfg.evaluate.eval_labels
+        self.eval_enabled = bool(evl.enabled)
+        self.eval_iou_thresholds = [float(t) for t in evl.iou_thresholds]
+        self.eval_per_image = bool(evl.per_image)
+        self.eval_save_json = bool(evl.save_json)
+        self.labels_dir = None if evl.labels_dir in (None, "null") else _to_abs(Path(evl.labels_dir))
+
+        # prepare evaluator
+        if self.eval_enabled:
+            self.evaluator = DetectionEvaluator(self.eval_iou_thresholds, per_image=self.eval_per_image)
+            # Save root (one level above images/), e.g., .../multi_scale or multi_scale2
+            self.run_root = self.save_dir.parent
+
         # Model
         self.model = YOLO(str(self.model_path))
         try:
@@ -387,7 +593,48 @@ class YOLOMultiscalePredictor:
 
             results, _raw = self._postprocess_det(merged, im0, path)
             log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
+
+            # Ground-truth evaluation (if enabled)
+            if self.eval_enabled:
+                H, W = im0.shape[:2]
+
+                # Predictions (numpy)
+                if merged.numel():
+                    p_boxes = merged[:, :4].cpu().numpy().astype(np.float32)
+                    p_scores = merged[:, 4].cpu().numpy().astype(np.float32)
+                    p_classes = merged[:, 5].cpu().numpy().astype(np.int64)
+                else:
+                    p_boxes = np.zeros((0, 4), dtype=np.float32)
+                    p_scores = np.zeros((0,), dtype=np.float32)
+                    p_classes = np.zeros((0,), dtype=np.int64)
+
+                # Ground-truth
+                lbl_path = _label_path_from_image_path(path, self.source, self.labels_dir)
+                g_boxes, g_classes = _read_yolo_labels(lbl_path, img_w=W, img_h=H)
+
+                self.evaluator.add_image(
+                    image_id=str(path),
+                    pred_boxes=p_boxes, pred_scores=p_scores, pred_classes=p_classes,
+                    gt_boxes=g_boxes,   gt_classes=g_classes,
+                )
+
             self._save_visualizations(results, path)
+        
+        # Summarize detection metrics
+        if self.eval_enabled:
+            metrics = self.evaluator.summarize()
+            if self.eval_save_json:
+                out_json = self.run_root / "metrics.json"
+                with open(out_json, "w") as f:
+                    json.dump(metrics, f, indent=2)
+                log.info(f"Saved metrics: {out_json}")
+
+            # Pretty log a quick summary
+            for t in self.eval_iou_thresholds:
+                key = f"{t:.2f}"
+                log.info(f"mAP@{key}: {metrics['mAP'].get(key)}")
+            if len(self.eval_iou_thresholds) > 1:
+                log.info(f"mAP@[{'/'.join(f'{t:.2f}' for t in self.eval_iou_thresholds)}]: {metrics['mAP'].get('avg')}")
 
     @torch.no_grad()
     def _multiscale_raw_preds(self, im0: np.ndarray) -> torch.Tensor:
