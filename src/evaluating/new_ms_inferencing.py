@@ -219,7 +219,8 @@ def _resolve_test_images(cfg: DictConfig) -> Path:
 
     base_path = Path(data_cfg.get("path", "."))
     base_path = base_path if base_path.is_absolute() else data_yaml_path.parent / base_path
-    test_rel = data_cfg.get("test")
+    test_rel = data_cfg.get(cfg.evaluate.split)
+
     if not test_rel:
         raise ValueError(f"No 'test:' field found in data.yaml at {data_yaml_path}")
 
@@ -384,7 +385,19 @@ class DetectionEvaluator:
                 self.preds_by_class[int(c)].append({"image_id": image_id, "score": float(s), "box": box.tolist()})
 
         if self.per_image:
-            self.per_image_stats.setdefault(image_id, {"pred": int(len(pred_boxes)), "gt": int(len(gt_boxes))})
+            self.per_image_stats.setdefault(image_id, {"meta": {
+                "num_pred": int(len(pred_boxes)),
+                "num_gt": int(len(gt_boxes))
+            }})
+            # compute per-image TP/FP/FN for each IoU threshold (and per class)
+            self._accumulate_per_image_stats(
+                image_id,
+                pred_boxes.astype(np.float32),
+                pred_scores.astype(np.float32),
+                pred_classes.astype(np.int64),
+                gt_boxes.astype(np.float32),
+                gt_classes.astype(np.int64),
+            )
 
     def _compute_ap_for_class(self, c: int, iou_thr: float) -> dict:
         preds = self.preds_by_class.get(c, [])
@@ -426,6 +439,88 @@ class DetectionEvaluator:
         prec = np.divide(tp_cum, (tp_cum + fp_cum + 1e-9))
         ap = _voc_ap(rec, prec)
         return {"AP": ap, "precision": prec.tolist(), "recall": rec.tolist(), "npos": int(npos)}
+    
+    def _greedy_match_single_class(self, preds_c, gts_c, iou_thr: float):
+        """
+        preds_c: (P, 5) -> [x1,y1,x2,y2,score] for one class
+        gts_c:   (G, 4) -> [x1,y1,x2,y2] for one class
+        Returns: tp, fp, fn
+        """
+        if preds_c.size == 0 and gts_c.size == 0:
+            return 0, 0, 0
+        if preds_c.size == 0:
+            return 0, 0, int(len(gts_c))
+        if gts_c.size == 0:
+            return 0, int(len(preds_c)), 0
+
+        # sort predictions by score desc
+        order = np.argsort(-preds_c[:, 4])
+        preds_c = preds_c[order]
+
+        matched = np.zeros(len(gts_c), dtype=bool)
+        tp = 0
+        fp = 0
+
+        # IoU matrix (P x G)
+        ious = _iou_xyxy_np(preds_c[:, :4], gts_c)  # (P,G)
+
+        for i in range(len(preds_c)):
+            j = int(np.argmax(ious[i]))
+            if ious[i, j] >= iou_thr and not matched[j]:
+                tp += 1
+                matched[j] = True
+            else:
+                fp += 1
+
+        fn = int(len(gts_c) - matched.sum())
+        return tp, fp, fn
+
+
+    def _accumulate_per_image_stats(self, image_id: str,
+                                    pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
+                                    gt_boxes: np.ndarray,   gt_classes: np.ndarray):
+        """
+        Compute per-image TP/FP/FN at each IoU threshold in self.iou_thresholds.
+        Stores:
+        self.per_image_stats[image_id][f"{t:.2f}"]["all"] = {tp, fp, fn}
+        and a class breakdown:
+        self.per_image_stats[image_id][f"{t:.2f}"]["by_class"][c] = {tp, fp, fn, n_pred, n_gt}
+        """
+        # init container if first time
+        if image_id not in self.per_image_stats:
+            self.per_image_stats[image_id] = {}
+
+        classes = sorted(set(list(pred_classes.astype(int)) + list(gt_classes.astype(int))))
+
+        for t in self.iou_thresholds:
+            by_class = {}
+            tp_total = fp_total = fn_total = 0
+
+            for c in classes:
+                # slice preds for class c
+                m_p = (pred_classes == c)
+                if m_p.any():
+                    preds_c = np.concatenate([pred_boxes[m_p], pred_scores[m_p, None]], axis=1)  # (P,5)
+                else:
+                    preds_c = np.zeros((0, 5), dtype=np.float32)
+
+                # slice gts for class c
+                m_g = (gt_classes == c)
+                gts_c = gt_boxes[m_g] if m_g.any() else np.zeros((0, 4), dtype=np.float32)
+
+                tp_c, fp_c, fn_c = self._greedy_match_single_class(preds_c, gts_c, float(t))
+                by_class[int(c)] = {
+                    "tp": int(tp_c), "fp": int(fp_c), "fn": int(fn_c),
+                    "n_pred": int(len(preds_c)), "n_gt": int(len(gts_c)),
+                }
+                tp_total += tp_c
+                fp_total += fp_c
+                fn_total += fn_c
+
+            self.per_image_stats[image_id][f"{t:.2f}"] = {
+                "all": {"tp": int(tp_total), "fp": int(fp_total), "fn": int(fn_total)},
+                "by_class": by_class
+            }
 
     def summarize(self) -> dict:
         # Compute AP per class per IoU, then mAP
@@ -556,6 +651,77 @@ class YOLOMultiscalePredictor:
         self.save_dir.mkdir(parents=True, exist_ok=True)
         log.info(f"Saving predictions to: {self.save_dir}")
 
+        def _safe(x, default=None):
+            try:
+                return x() if callable(x) else x
+            except Exception:
+                return default
+
+        ckpt = _safe(lambda: getattr(getattr(self.model, "ckpt", None), "filename", None)) \
+            or str(self.model_path)
+
+        # capture class names mapping
+        try:
+            names_map = dict(self.names) if isinstance(self.names, dict) else self.names
+        except Exception:
+            names_map = None
+
+        # curated summary from cfg.evaluate
+        ev_summary = {
+            "base_imgsz": int(self.base_imgsz),
+            "scales": list(self.scales),
+            "per_scale": {
+                "conf": float(self.per_scale_conf),
+                "iou": float(self.per_scale_iou),
+                "max_det": int(self.per_scale_max_det),
+            },
+            "final": {
+                "conf": float(self.final_conf),
+                "iou": float(self.final_iou),
+                "max_det": int(self.final_max_det),
+            },
+            "post_fusion_nms": {
+                "enabled": bool(self.post_fusion_nms_enabled),
+                "iou": float(self.post_fusion_nms_iou),
+            },
+            "draw": {
+                "labels": bool(self.draw_labels),
+                "boxes": bool(self.draw_boxes),
+                "conf": bool(self.draw_conf),
+                "line_width": int(self.line_width),
+                "font_size": float(self.font_size),
+            },
+            "eval_labels": {
+                "enabled": bool(self.eval_enabled),
+                "iou_thresholds": list(self.eval_iou_thresholds),
+                "per_image": bool(self.eval_per_image),
+                "save_json": bool(self.eval_save_json),
+                "labels_dir": str(self.labels_dir) if self.labels_dir else None,
+            },
+            "nms_method": str(getattr(self.cfg, "nms_method", "ultralytics")),
+            "gpus": OmegaConf.to_container(getattr(ev, "gpus", {}), resolve=True),
+        }
+
+        # assemble metadata
+        self.run_meta = {
+            "model": {
+                "checkpoint": ckpt,
+                "names": names_map,
+            },
+            "io": {
+                "source": str(self.source),
+                "save_dir": str(self.save_dir),
+                "run_root": str(getattr(self, "run_root", self.save_dir.parent)),
+            },
+            "evaluate_cfg_summary": ev_summary,
+        }
+
+        # write alongside metrics/images
+        meta_path = Path(self.save_dir.parent) / "inference_run_metadata.json"
+        with open(meta_path, "w") as f:
+            json.dump(self.run_meta, f, indent=2)
+        log.info(f"Wrote run metadata: {meta_path}")
+
     def run(self) -> None:
         source, stream, screenshot, from_img, in_memory, tensor = check_source(self.source)
         source_type = source.source_type if in_memory else SourceTypes(stream, screenshot, from_img, tensor)
@@ -569,40 +735,57 @@ class YOLOMultiscalePredictor:
             im0 = im0s_list[0]
 
             log.debug(f"Inferencing: {path}")
+
+            # first tier - multi-scale raw predictions
             merged = self._multiscale_raw_preds(im0)
 
-            log.info(f"  {len(merged)} boxes before WBF")
-            if merged.numel():
-                boxes, scores, clses = merged[:, :4], merged[:, 4], merged[:, 5]
-                merged = weighted_boxes_fusion(
+            # second tier - filtering detections
+            results, _raw = self._postprocess_det(merged, im0, path)
+
+            # log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
+
+            # raw_eval = _raw.clone() if _raw.numel() else _raw
+
+            log.info(f"  {_raw.shape[0]} boxes before WBF")
+            if _raw.numel():
+                boxes  = _raw[:, :4]
+                scores = _raw[:, 4]
+                clses  = _raw[:, 5]
+                _raw = weighted_boxes_fusion(
                     boxes, scores, clses, iou_thr=0.65, score_power=1.0, conf_type="max"
                 )
-            log.info(f"  {len(merged)} boxes after WBF")
+            log.info(f"  {_raw.shape[0]} boxes after WBF")
 
             # Optional third-tier NMS
-            if self.post_fusion_nms_enabled and merged.numel():
+            if self.post_fusion_nms_enabled and _raw.numel():
                 # torchvision expects integer group indices for class labels
                 keep = batched_nms(
-                    merged[:, :4],                  # boxes [N,4]
-                    merged[:, 4],                   # scores [N]
-                    merged[:, 5].to(torch.int64),   # class indices [N] as int64
+                    _raw[:, :4],                  # boxes [N,4]
+                    _raw[:, 4],                   # scores [N]
+                    _raw[:, 5].to(torch.int64),   # class indices [N] as int64
                     iou_threshold=self.post_fusion_nms_iou,
                 )
-                merged = merged[keep]
-                log.info(f"  {len(merged)} boxes after extra NMS")
+                _raw = _raw[keep]
+                log.info(f"  {len(_raw)} boxes after extra NMS")
 
-            results, _raw = self._postprocess_det(merged, im0, path)
-            log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
+            final_results = [Results(
+                boxes=_raw.detach().cpu() if _raw.numel() else _raw,  # [N,6]: xyxy, conf, cls
+                orig_img=im0,
+                path=str(path),
+                names=self.names
+            )]
+
+            self._save_visualizations(final_results, path)
 
             # Ground-truth evaluation (if enabled)
             if self.eval_enabled:
                 H, W = im0.shape[:2]
 
                 # Predictions (numpy)
-                if merged.numel():
-                    p_boxes = merged[:, :4].cpu().numpy().astype(np.float32)
-                    p_scores = merged[:, 4].cpu().numpy().astype(np.float32)
-                    p_classes = merged[:, 5].cpu().numpy().astype(np.int64)
+                if _raw.numel():
+                    p_boxes = _raw[:, :4].cpu().numpy().astype(np.float32)
+                    p_scores = _raw[:, 4].cpu().numpy().astype(np.float32)
+                    p_classes = _raw[:, 5].cpu().numpy().astype(np.int64)
                 else:
                     p_boxes = np.zeros((0, 4), dtype=np.float32)
                     p_scores = np.zeros((0,), dtype=np.float32)
@@ -617,8 +800,6 @@ class YOLOMultiscalePredictor:
                     pred_boxes=p_boxes, pred_scores=p_scores, pred_classes=p_classes,
                     gt_boxes=g_boxes,   gt_classes=g_classes,
                 )
-
-            self._save_visualizations(results, path)
         
         # Summarize detection metrics
         if self.eval_enabled:
@@ -675,7 +856,7 @@ class YOLOMultiscalePredictor:
         orig_img: np.ndarray,
         path: Path,
         classes: Optional[Sequence[int]] = None,
-    ) -> Tuple[List[Results], List[torch.Tensor]]:
+    ) -> Tuple[List[Results], torch.Tensor]:
         if merged_xyxy_conf_cls is None or merged_xyxy_conf_cls.numel() == 0:
             preds_in = torch.zeros((1, 0, 6), dtype=torch.float32)
         else:
@@ -690,9 +871,9 @@ class YOLOMultiscalePredictor:
             max_det=self.final_max_det,
         )
 
-        out = filtered[0]
+        out = filtered[0]  # shape [N,6] (xyxy, conf, cls) or empty [0,6]
         results = [Results(boxes=out, orig_img=orig_img, path=str(path), names=self.names)]
-        return results, [out]
+        return results, out
 
     def _save_visualizations(self, results: Iterable[Results], path: Path) -> None:
         out_path = self.save_dir / path.name
