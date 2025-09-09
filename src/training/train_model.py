@@ -102,6 +102,7 @@ class TrainModel:
             flipud=self.cfg.train.flipud,
             fliplr=self.cfg.train.fliplr,
             mosaic=self.cfg.train.mosaic,
+            mixup=self.cfg.train.mixup,
             scale=self.cfg.train.scale,
             shear=self.cfg.train.shear,
             degrees=self.cfg.train.degrees,
@@ -111,10 +112,13 @@ class TrainModel:
             hsv_s=self.cfg.train.hsv_s,
             hsv_v=self.cfg.train.hsv_v,
             lr0=self.cfg.train.lr0,
+            lrf=self.cfg.train.lrf,
             weight_decay=self.cfg.train.weight_decay,
             warmup_epochs=self.cfg.train.warmup_epochs,
             patience=self.cfg.train.patience,
             cache=self.cfg.train.cache,
+            box=self.cfg.train.box,
+            cls=self.cfg.train.cls,
         )
         
         # Save the model
