@@ -13,12 +13,14 @@ dependencies:
   - cvat-sdk
   - opencv
   - scikit-learn
-  - ultralytics
+  # - ultralytics
+  - scipy
+  - matplotlib
+  - seaborn
+  - scikit-learn
   - pip
   - pip:
     - torch
     - torchvision
     - gputil
-  # - matplotlib
-  # - seaborn
-  # - scikit-learn
+    - ultralytics==8.3.174

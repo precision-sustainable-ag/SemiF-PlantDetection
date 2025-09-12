@@ -25,6 +25,7 @@ from ultralytics.utils import ops
 
 from torchvision.ops import batched_nms
 from hydra.utils import get_original_cwd
+from src.evaluating.detection_evaluator import DetectionEvaluator
 from src.utils.utils import get_latest_checkpoint
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,23 @@ def _to_abs(p: Path) -> Path:
     """Make `p` absolute using Hydra's original CWD when needed."""
     p = Path(p)
     return p if p.is_absolute() else Path(get_original_cwd()) / p
+
+def _json_default(o):
+    # numpy -> python
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, (np.floating,)):
+        return float(o)
+    if isinstance(o, (np.ndarray,)):
+        return o.tolist()
+    # torch -> python
+    if isinstance(o, torch.Tensor):
+        return o.detach().cpu().tolist()
+    # dataclasses or other odd types
+    try:
+        return o.__dict__
+    except Exception:
+        return str(o)
 
 def pick_best_device(min_free_gb: float = 8.0, exclude: list[int] | None = None) -> str:
     """
@@ -319,235 +337,6 @@ def _read_yolo_labels(txt_path: Path, img_w: int, img_h: int) -> tuple[np.ndarra
         return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int64)
     return np.array(boxes, dtype=np.float32), np.array(clses, dtype=np.int64)
 
-def _iou_xyxy_np(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """NumPy IoU for xyxy boxes. a:[Na,4], b:[Nb,4] -> [Na,Nb]"""
-    if a.size == 0 or b.size == 0:
-        return np.zeros((a.shape[0], b.shape[0]), dtype=np.float32)
-    tl = np.maximum(a[:, None, :2], b[None, :, :2])
-    br = np.minimum(a[:, None, 2:], b[None, :, 2:])
-    wh = np.clip(br - tl, a_min=0.0, a_max=None)
-    inter = wh[..., 0] * wh[..., 1]
-    area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1])
-    area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
-    union = area_a[:, None] + area_b[None, :] - inter + 1e-9
-    return inter / union
-
-def _voc_ap(rec: np.ndarray, prec: np.ndarray) -> float:
-    """
-    VOC-style AP (area under P-R curve with 11/continuous interpolation).
-    Here we use the continuous interpolation implementation.
-    """
-    mrec = np.concatenate(([0.0], rec, [1.0]))
-    mpre = np.concatenate(([0.0], prec, [0.0]))
-    for i in range(mpre.size - 1, 0, -1):
-        mpre[i - 1] = max(mpre[i - 1], mpre[i])
-    idx = np.where(mrec[1:] != mrec[:-1])[0]
-    return float(np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]))
-
-# ------------------------------- Evaluator ------------------------------------
-
-class DetectionEvaluator:
-    """
-    Accumulates predictions/ground-truth and computes AP/mAP across IoU thresholds.
-    """
-    def __init__(self, iou_thresholds: Sequence[float], per_image: bool = False):
-        self.iou_thresholds = [float(t) for t in iou_thresholds]
-        self.per_image = per_image
-
-        # preds_by_class[c] = list of dict(image_id, score, box[4])
-        self.preds_by_class = defaultdict(list)
-        # gts_by_image_class[image_id][c] = [box, ...]
-        self.gts_by_image_class = defaultdict(lambda: defaultdict(list))
-        self.num_gt_by_class = defaultdict(int)
-
-        # optional per-image diagnostics
-        self.per_image_stats = {}  # image_id -> dict (filled if per_image=True)
-
-    def add_image(
-        self,
-        image_id: str,
-        pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
-        gt_boxes: np.ndarray, gt_classes: np.ndarray,
-    ):
-        # store gts
-        for c in np.unique(gt_classes):
-            m = (gt_classes == c)
-            b = gt_boxes[m]
-            self.gts_by_image_class[image_id][int(c)].extend(b.tolist())
-            self.num_gt_by_class[int(c)] += int(m.sum())
-
-        # store preds
-        for c in np.unique(pred_classes):
-            m = (pred_classes == c)
-            boxes = pred_boxes[m]
-            scores = pred_scores[m]
-            for box, s in zip(boxes, scores):
-                self.preds_by_class[int(c)].append({"image_id": image_id, "score": float(s), "box": box.tolist()})
-
-        if self.per_image:
-            self.per_image_stats.setdefault(image_id, {"meta": {
-                "num_pred": int(len(pred_boxes)),
-                "num_gt": int(len(gt_boxes))
-            }})
-            # compute per-image TP/FP/FN for each IoU threshold (and per class)
-            self._accumulate_per_image_stats(
-                image_id,
-                pred_boxes.astype(np.float32),
-                pred_scores.astype(np.float32),
-                pred_classes.astype(np.int64),
-                gt_boxes.astype(np.float32),
-                gt_classes.astype(np.int64),
-            )
-
-    def _compute_ap_for_class(self, c: int, iou_thr: float) -> dict:
-        preds = self.preds_by_class.get(c, [])
-        npos = self.num_gt_by_class.get(c, 0)
-        if npos == 0:
-            return {"AP": np.nan, "precision": [], "recall": []}
-
-        # sort predictions by score desc
-        preds = sorted(preds, key=lambda x: x["score"], reverse=True)
-        tp = np.zeros(len(preds), dtype=np.float32)
-        fp = np.zeros(len(preds), dtype=np.float32)
-
-        # matched gt flags per image
-        matched = {img_id: np.zeros(len(self.gts_by_image_class[img_id].get(c, [])), dtype=bool)
-                   for img_id in self.gts_by_image_class}
-
-        for i, p in enumerate(preds):
-            img_id = p["image_id"]
-            gt_list = self.gts_by_image_class[img_id].get(c, [])
-            gt = np.array(gt_list, dtype=np.float32)
-            box = np.array(p["box"], dtype=np.float32)[None, :]
-
-            if gt.size == 0:
-                fp[i] = 1.0
-                continue
-
-            ious = _iou_xyxy_np(box, gt).squeeze(0)
-            j = int(np.argmax(ious))
-            if ious[j] >= iou_thr and not matched[img_id][j]:
-                tp[i] = 1.0
-                matched[img_id][j] = True
-            else:
-                fp[i] = 1.0
-
-        # precision-recall
-        tp_cum = np.cumsum(tp)
-        fp_cum = np.cumsum(fp)
-        rec = tp_cum / max(npos, 1)
-        prec = np.divide(tp_cum, (tp_cum + fp_cum + 1e-9))
-        ap = _voc_ap(rec, prec)
-        return {"AP": ap, "precision": prec.tolist(), "recall": rec.tolist(), "npos": int(npos)}
-    
-    def _greedy_match_single_class(self, preds_c, gts_c, iou_thr: float):
-        """
-        preds_c: (P, 5) -> [x1,y1,x2,y2,score] for one class
-        gts_c:   (G, 4) -> [x1,y1,x2,y2] for one class
-        Returns: tp, fp, fn
-        """
-        if preds_c.size == 0 and gts_c.size == 0:
-            return 0, 0, 0
-        if preds_c.size == 0:
-            return 0, 0, int(len(gts_c))
-        if gts_c.size == 0:
-            return 0, int(len(preds_c)), 0
-
-        # sort predictions by score desc
-        order = np.argsort(-preds_c[:, 4])
-        preds_c = preds_c[order]
-
-        matched = np.zeros(len(gts_c), dtype=bool)
-        tp = 0
-        fp = 0
-
-        # IoU matrix (P x G)
-        ious = _iou_xyxy_np(preds_c[:, :4], gts_c)  # (P,G)
-
-        for i in range(len(preds_c)):
-            j = int(np.argmax(ious[i]))
-            if ious[i, j] >= iou_thr and not matched[j]:
-                tp += 1
-                matched[j] = True
-            else:
-                fp += 1
-
-        fn = int(len(gts_c) - matched.sum())
-        return tp, fp, fn
-
-
-    def _accumulate_per_image_stats(self, image_id: str,
-                                    pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
-                                    gt_boxes: np.ndarray,   gt_classes: np.ndarray):
-        """
-        Compute per-image TP/FP/FN at each IoU threshold in self.iou_thresholds.
-        Stores:
-        self.per_image_stats[image_id][f"{t:.2f}"]["all"] = {tp, fp, fn}
-        and a class breakdown:
-        self.per_image_stats[image_id][f"{t:.2f}"]["by_class"][c] = {tp, fp, fn, n_pred, n_gt}
-        """
-        # init container if first time
-        if image_id not in self.per_image_stats:
-            self.per_image_stats[image_id] = {}
-
-        classes = sorted(set(list(pred_classes.astype(int)) + list(gt_classes.astype(int))))
-
-        for t in self.iou_thresholds:
-            by_class = {}
-            tp_total = fp_total = fn_total = 0
-
-            for c in classes:
-                # slice preds for class c
-                m_p = (pred_classes == c)
-                if m_p.any():
-                    preds_c = np.concatenate([pred_boxes[m_p], pred_scores[m_p, None]], axis=1)  # (P,5)
-                else:
-                    preds_c = np.zeros((0, 5), dtype=np.float32)
-
-                # slice gts for class c
-                m_g = (gt_classes == c)
-                gts_c = gt_boxes[m_g] if m_g.any() else np.zeros((0, 4), dtype=np.float32)
-
-                tp_c, fp_c, fn_c = self._greedy_match_single_class(preds_c, gts_c, float(t))
-                by_class[int(c)] = {
-                    "tp": int(tp_c), "fp": int(fp_c), "fn": int(fn_c),
-                    "n_pred": int(len(preds_c)), "n_gt": int(len(gts_c)),
-                }
-                tp_total += tp_c
-                fp_total += fp_c
-                fn_total += fn_c
-
-            self.per_image_stats[image_id][f"{t:.2f}"] = {
-                "all": {"tp": int(tp_total), "fp": int(fp_total), "fn": int(fn_total)},
-                "by_class": by_class
-            }
-
-    def summarize(self) -> dict:
-        # Compute AP per class per IoU, then mAP
-        classes = sorted(set(list(self.preds_by_class.keys()) + list(self.num_gt_by_class.keys())))
-        results = {"per_class": {}, "mAP": {}}
-
-        for t in self.iou_thresholds:
-            aps = []
-            per_class = {}
-            for c in classes:
-                out = self._compute_ap_for_class(c, iou_thr=t)
-                per_class[str(c)] = {"AP": out["AP"], "npos": out.get("npos", 0)}
-                if not np.isnan(out["AP"]):
-                    aps.append(out["AP"])
-            results["mAP"][f"{t:.2f}"] = float(np.mean(aps)) if aps else float("nan")
-            results["per_class"][f"{t:.2f}"] = per_class
-
-        # macro across thresholds (COCO-style average if multiple thresholds provided)
-        if len(self.iou_thresholds) > 1:
-            results["mAP"]["avg"] = float(np.nanmean([results["mAP"][f"{t:.2f}"] for t in self.iou_thresholds]))
-
-        # Optional per-image stats
-        if self.per_image:
-            results["per_image"] = self.per_image_stats
-
-        return results
-
 # ------------------------------- Predictor ------------------------------------
 
 class YOLOMultiscalePredictor:
@@ -807,7 +596,7 @@ class YOLOMultiscalePredictor:
             if self.eval_save_json:
                 out_json = self.run_root / "metrics.json"
                 with open(out_json, "w") as f:
-                    json.dump(metrics, f, indent=2)
+                    json.dump(metrics, f, indent=2, default=_json_default)
                 log.info(f"Saved metrics: {out_json}")
 
             # Pretty log a quick summary
