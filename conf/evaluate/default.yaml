@@ -1,19 +1,70 @@
 tasks:
-  - evaluate_model
-  - benchmark_nms
-  - visualize_nms
+  # - evaluate_model
+  # - benchmark_nms
+  # - visualize_nms
+  - ms_inferencing
 
 split: test #val
 save_json: true
 run_version: 1 # looks in runs_1; is ignored if custom_path is provided
-custom_path: # Provide a custom model path, if provided, ignores run_version
+# Subdirectory stem for saving results; actual dir will have an incrementing suffix
+save_subdir_stem: my_evaluation_results
 
-conf: [0.25, 0.35, 0.45, 0.55] # confidence threshold for predictions
-iou: [0.5, 0.6, 0.7, 0.8] # iou threshold values for predictions
-scales: [0.15, 0.25, 0.5, 1, 1.5] # multiscale inference scales
+# Device selection
+# - "auto": pick best visible GPU
+# - or set explicit device string: "cuda:0" / "cpu"
+device: auto
 
+# Base image size used for scale factors below
+base_imgsz: 4000
+
+# Multiscale inference scales
+scales: [0.15, 0.25, 0.5, 1.0, 1.5]
+
+# Per-scale filtering 
+per_scale_conf: 0.0
+per_scale_iou: 1.0
+per_scale_max_det: 2000
+
+# Final postprocess thresholds (single NMS after concatenation)
+# These map to Ultralytics' conf/iou
+conf: 0.7           # final_conf
+iou: 0.55            # final_iou
+final_max_det: 2000
+
+# Optional extra NMS right after WBF (before Ultralytics NMS)
+post_fusion_nms:
+  enabled: false   # set true to turn it on
+  iou: 0.60        # IoU threshold for batched_nms
+
+# Visualization
+draw_labels: true
+draw_boxes: true
+draw_conf: true
+line_width: 3
+font_size: .5
+
+# --- label-based evaluation ---
+eval_labels:
+  enabled: true              # required
+  iou_thresholds: [0.50, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]     # or [0.50,0.55,...,0.95] for COCO-style mAP
+  per_image: true           # true = also log per-image precision/recall
+  labels_dir: null
+  save_json: true            # write metrics JSON next to the images/ folder
+  viz_single_image_preds: false  # save predicted images with boxes to save_dir/preds
+  viz_side_by_side: 
+    enabled: true # Save side-by-side GT and Pred images with TP/FP/FN coloring
+    save_full_res: false # If true, saves full resolution images; longer but higher quality
+    save_preview: true # If true, saves preview; faster but lower quality
+
+
+# Optional class name map (use model.names if null)
+names: null
+
+# GPU policy for AUTO picker (logical indices after CUDA_VISIBLE_DEVICES)
 gpus:
-  n: 3          # number of GPUs to use
-  exclude_id: 0 # skip first GPU
+  n: 4
+  exclude_id: 0
 
-nms_method: [custom, ultralytics, soft, merge, matrix]
+# NMS backend (kept for parity with your other evaluate tasks)
+nms_method: ultralytics
