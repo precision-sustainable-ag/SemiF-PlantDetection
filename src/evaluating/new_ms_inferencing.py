@@ -3,16 +3,12 @@ from __future__ import annotations
 
 import re
 import logging
-from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import os
 import json
 import cv2
-import GPUtil
-import hydra
 import numpy as np
 import torch
 import yaml
@@ -27,7 +23,13 @@ from torchvision.ops import batched_nms
 from hydra.utils import get_original_cwd
 from src.evaluating.detection_evaluator import DetectionEvaluator
 from src.utils.utils import get_latest_checkpoint
-
+from src.evaluating.detection_evaluator import (
+    draw_boxes_on_image_with_colors,
+    match_tp_fp_fn,
+    ui_scale_for_image,
+    put_counts_legend,
+    put_panel_title
+)
 log = logging.getLogger(__name__)
 
 # ------------------------------- Config ---------------------------------------
@@ -279,7 +281,7 @@ def _resolve_save_dir(cfg: DictConfig, source: Path) -> Path:
     else:
         base = source / "results" / "ms_infer"
 
-    run_root = _next_available_subdir(base, stem="multi_scale")
+    run_root = _next_available_subdir(base, stem=cfg.evaluate.save_subdir_stem)
     return run_root / "images"
 
 # ------------------------------- Eval helpers ------------------------------------
@@ -401,6 +403,10 @@ class YOLOMultiscalePredictor:
         self.line_width         = int(ev.line_width)
         self.font_size          = float(ev.font_size)
         self.names              = ev.names
+        self.viz_side_by_side   = bool(ev.eval_labels.viz_side_by_side.enabled)
+        self.sbs_save_full_res  = bool(ev.eval_labels.viz_side_by_side.save_full_res)
+        self.sbs_save_preview    = bool(ev.eval_labels.viz_side_by_side.save_preview)
+        self.viz_single_image_preds = bool(ev.eval_labels.viz_single_image_preds)
 
         # Eval labels
         evl = cfg.evaluate.eval_labels
@@ -517,7 +523,6 @@ class YOLOMultiscalePredictor:
 
         dataset = LoadImagesAndVideos(path=source, batch=1, channels=3)
         setattr(dataset, "source_type", source_type)
-
         for batch in dataset:
             paths, im0s_list, _info = batch
             path = Path(paths[0])
@@ -564,7 +569,8 @@ class YOLOMultiscalePredictor:
                 names=self.names
             )]
 
-            self._save_visualizations(final_results, path)
+            if self.viz_single_image_preds:
+                self._save_visualizations(final_results, path)
 
             # Ground-truth evaluation (if enabled)
             if self.eval_enabled:
@@ -589,6 +595,15 @@ class YOLOMultiscalePredictor:
                     pred_boxes=p_boxes, pred_scores=p_scores, pred_classes=p_classes,
                     gt_boxes=g_boxes,   gt_classes=g_classes,
                 )
+
+                if self.viz_side_by_side:
+                    self._save_side_by_side(
+                        im0=im0,
+                        path=path,
+                        gt_boxes=g_boxes,
+                        gt_classes=g_classes,
+                        pred_xyxy_conf_cls=_raw.detach().cpu() if _raw.numel() else _raw,  # [N,6]
+                    )
         
         # Summarize detection metrics
         if self.eval_enabled:
@@ -678,6 +693,127 @@ class YOLOMultiscalePredictor:
             )
             cv2.imwrite(str(out_path), plot_img)
             log.info(f"Saved: {out_path}")
+
+    def _save_side_by_side(
+        self,
+        im0: np.ndarray,
+        path: Path,
+        gt_boxes: np.ndarray, gt_classes: np.ndarray,
+        pred_xyxy_conf_cls: torch.Tensor,  # [N,6] xyxy, conf, cls (orig coords)
+    ) -> None:
+        """
+        Save [ GT overlay | Prediction overlay ] with TP/FP/FN coloring + small legend.
+        Colors (BGR):
+        TP = green (0,255,0), FP = red (0,0,255), FN = yellow (0,255,255)
+        """
+        out_dir = self.save_dir / "side_by_side"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{path.stem}_gt_pred.jpg"
+
+        H, W = im0.shape[:2]
+        # ensure 8-bit BGR for drawing
+        if im0.dtype != np.uint8:
+            im0 = np.clip(im0, 0, 255).astype(np.uint8)
+        # Convert preds to numpy arrays
+        if pred_xyxy_conf_cls is not None and pred_xyxy_conf_cls.numel():
+            p = pred_xyxy_conf_cls.detach().cpu().numpy().astype(np.float32)  # [N,6]
+            p_boxes  = p[:, :4]
+            p_scores = p[:, 4]
+            p_cls    = p[:, 5].astype(np.int64)
+        else:
+            p_boxes  = np.zeros((0, 4), dtype=np.float32)
+            p_scores = np.zeros((0,), dtype=np.float32)
+            p_cls    = np.zeros((0,), dtype=np.int64)
+
+        # Default IoU threshold: first configured eval IoU if available, else 0.50
+        iou_thr = float(self.eval_iou_thresholds[0]) if getattr(self, "eval_iou_thresholds", None) else 0.50
+
+        # Match to label TP/FP and GT matched (for FN)
+        pred_status, gt_matched = match_tp_fp_fn(
+            pred_boxes=p_boxes, pred_scores=p_scores, pred_classes=p_cls,
+            gt_boxes=gt_boxes,   gt_classes=gt_classes,
+            iou_thr=iou_thr,
+        )
+
+            # --- counts for legends ---
+        tp_pred = int(np.sum(pred_status == "TP"))
+        fp_pred = int(np.sum(pred_status == "FP"))
+        fn_gt  = int(np.sum(~gt_matched))           # GT that weren't matched
+        tp_gt  = int(np.sum(gt_matched))            # matched GT (for display symmetry)
+
+        # --- Left: GT overlay --- matched GT -> green (TP from GT view), unmatched -> yellow (FN)
+        ui = ui_scale_for_image(*im0.shape[:2])  # e.g., 6k px -> ~6.0
+        gt_colors = [(0,255,0) if m else (0,255,255) for m in (gt_matched.tolist() if gt_boxes.size else [])]
+        gt_img = draw_boxes_on_image_with_colors(
+            im0,
+            gt_boxes.astype(np.float32) if gt_boxes.size else np.zeros((0, 4), dtype=np.float32),
+            gt_classes.astype(np.int64) if gt_boxes.size else np.zeros((0,), dtype=np.int64),
+            gt_colors,
+            names=self.names,
+            label_texts=None,  # <- use class names (from `names`)
+            line_thickness=max(2, int(self.line_width * ui)),
+            font_scale=float(self.font_size * ui),
+        )
+        # --- Left: GT image and legend ---
+        put_panel_title(gt_img, "Ground Truth", origin=(int(0.012*W), int(0.045*H)), scale=ui)
+        # Legends (counts)
+        put_counts_legend(
+            gt_img,
+            items=[
+                (f"TP (matched GT): {tp_gt}", (0,255,0)),
+                (f"FN (missed GT): {fn_gt}",  (0,255,255)),
+            ],
+            origin=(int(0.012*W), int(0.075*H)),  # a bit below the title
+            scale=ui,
+            bg_alpha=0.38,
+        )
+        
+        # --- RIGHT (Pred): confidence only ---
+        pred_colors = [(0,255,0) if s == "TP" else (0,0,255) for s in (pred_status.tolist() if len(pred_status) else [])]
+        pred_conf_texts = [f"{sc:.4f}" for sc in (p_scores.tolist() if len(p_scores) else [])]
+
+        pred_img = draw_boxes_on_image_with_colors(
+            im0,
+            p_boxes,
+            p_cls,
+            pred_colors,
+            names=None,                 # <- ignore class names
+            label_texts=pred_conf_texts,  # <- show confidence numbers only
+            line_thickness=max(2, int(self.line_width * ui)),
+            font_scale=float(self.font_size * ui),
+        )
+        # --- Right: Pred image and legend ---
+        put_panel_title(pred_img, "Predictions", origin=(int(0.012*W), int(0.045*H)), scale=ui)
+        put_counts_legend(
+            pred_img,
+            items=[
+                (f"TP (correct): {tp_pred}",  (0,255,0)),
+                (f"FP (spurious): {fp_pred}", (0,0,255)),
+            ],
+            origin=(int(0.012*W), int(0.075*H)),
+            scale=ui,
+            bg_alpha=0.38,
+        )
+
+        # --- Concat side by side
+        if gt_img.shape[0] != pred_img.shape[0]:
+            new_w = int(round(pred_img.shape[1] * (gt_img.shape[0] / pred_img.shape[0])))
+            pred_img = cv2.resize(pred_img, (new_w, gt_img.shape[0]), interpolation=cv2.INTER_LINEAR)
+        side = np.concatenate([gt_img, pred_img], axis=1)
+
+        # Save a preview capped to 2400 px width (keeps aspect)
+        if self.sbs_save_preview and side.shape[1] > 2400:
+            preview_w = 2400
+            ratio = preview_w / side.shape[1]
+            preview_h = max(1, int(round(side.shape[0] * ratio)))
+            preview = cv2.resize(side, (preview_w, preview_h), interpolation=cv2.INTER_AREA)
+            preview_path = out_path.with_name(out_path.stem + "_preview.jpg")
+            cv2.imwrite(str(preview_path), preview)
+            log.info(f"Saved preview: {preview_path} ({preview_w}x{preview_h})")
+        
+        if self.sbs_save_full_res or side.shape[1] <= 2400:
+            cv2.imwrite(str(out_path), side)
+            log.info(f"Saved side-by-side GT|Pred (TP/FP/FN) @ IoU>={iou_thr:.2f}: {out_path}")
 
 # --------------------------------- CLI ----------------------------------------
 

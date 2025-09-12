@@ -3,6 +3,9 @@ from __future__ import annotations
 import numpy as np
 from collections import defaultdict
 from typing import Sequence
+from typing import Optional
+
+import cv2
 
 try:
     from scipy.optimize import linear_sum_assignment
@@ -10,6 +13,195 @@ try:
 except Exception:
     _SCIPY_OK = False
 
+# ------------------------------- Plot Helpers ------------------------------------
+
+def match_tp_fp_fn(
+    pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
+    gt_boxes: np.ndarray,   gt_classes: np.ndarray,
+    iou_thr: float = 0.50,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Greedy class-aware match to label predictions as TP/FP and GT as matched/unmatched.
+    Returns:
+      pred_status: array of shape [P] with values in {"TP","FP"} (dtype=object)
+      gt_matched:  boolean array of shape [G] (True if matched by a TP)
+    """
+    P = len(pred_boxes)
+    G = len(gt_boxes)
+    pred_status = np.array(["FP"] * P, dtype=object)
+    gt_matched  = np.zeros(G, dtype=bool)
+
+    if P == 0 or G == 0:
+        return pred_status, gt_matched  # all preds are FP if no GT; all GT are FN if no preds
+
+    # work per class
+    classes = np.union1d(pred_classes, gt_classes)
+    for c in classes:
+        p_idx = np.where(pred_classes == c)[0]
+        g_idx = np.where(gt_classes == c)[0]
+        if len(p_idx) == 0:
+            continue
+        if len(g_idx) == 0:
+            # all p in this class remain FP
+            continue
+
+        P_c = pred_boxes[p_idx]
+        scores_c = pred_scores[p_idx]
+        G_c = gt_boxes[g_idx]
+
+        order = np.argsort(-scores_c)
+        P_c = P_c[order]
+        ordered_idx = p_idx[order]
+
+        ious = _iou_xyxy_np(P_c, G_c)  # (P_c, G_c)
+        matched_g_local = np.zeros(len(G_c), dtype=bool)
+
+        for i, pi in enumerate(ordered_idx):
+            j = int(np.argmax(ious[i]))
+            if ious[i, j] >= iou_thr and not matched_g_local[j]:
+                pred_status[pi] = "TP"
+                matched_g_local[j] = True
+                gt_matched[g_idx[j]] = True
+            # else: stays FP
+
+    return pred_status, gt_matched
+
+def draw_boxes_on_image_with_colors(
+    img: np.ndarray,
+    boxes_xyxy: np.ndarray,          # [N,4]
+    classes: np.ndarray,             # [N]
+    colors: list[tuple[int,int,int]],
+    names: Optional[dict] = None,
+    label_texts: Optional[list[str]] = None,   # if provided, use these strings as the on-box text
+    line_thickness: int = 2,
+    font_scale: float = 0.5,
+) -> np.ndarray:
+    out = img.copy()
+    if boxes_xyxy.size == 0:
+        return out
+
+    for i, (box, cls) in enumerate(zip(boxes_xyxy, classes)):
+        x1, y1, x2, y2 = [int(round(v)) for v in box.tolist()]
+        color = colors[i] if i < len(colors) else (255, 255, 255)
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness=line_thickness)
+
+        # choose text
+        if label_texts is not None and i < len(label_texts):
+            text = label_texts[i]
+        else:
+            # default to class name if available
+            text = str(int(cls))
+            if isinstance(names, dict):
+                try:
+                    text = names.get(int(cls), text)
+                except Exception:
+                    pass
+
+        # draw label bg + text
+        (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, max(1, line_thickness-1))
+        th_full = th + baseline + 4
+        y_text = max(0, y1 - 4)
+        cv2.rectangle(out, (x1, max(0, y_text - th_full)), (x1 + tw + 6, y_text), color, thickness=-1)
+        cv2.putText(out, text, (x1 + 3, y_text - 4), cv2.FONT_HERSHEY_SIMPLEX, font_scale,
+                    (255, 255, 255), max(1, line_thickness-1), cv2.LINE_AA)
+    return out
+
+def draw_filled_rect_alpha(img: np.ndarray, pt1, pt2, color_bgr, alpha: float = 0.4):
+    """
+    Robust ROI alpha blend. Works on uint8 or float32 images.
+    Draws in-place.
+    """
+    x1, y1 = pt1
+    x2, y2 = pt2
+
+    # clamp & ensure proper ordering
+    h, w = img.shape[:2]
+    x1 = max(0, min(w - 1, x1))
+    x2 = max(0, min(w - 1, x2))
+    y1 = max(0, min(h - 1, y1))
+    y2 = max(0, min(h - 1, y2))
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    roi = img[y1:y2, x1:x2]
+    overlay = np.full_like(roi, color_bgr, dtype=roi.dtype)
+
+    if roi.dtype != np.uint8:
+        # normalize to float for blending, then cast back
+        r = roi.astype(np.float32)
+        o = overlay.astype(np.float32)
+        blended = (alpha * o + (1.0 - alpha) * r)
+        if img.dtype == np.uint8:
+            blended = np.clip(blended, 0, 255).astype(np.uint8)
+        else:
+            blended = blended.astype(img.dtype)
+    else:
+        # fast path for uint8
+        blended = cv2.addWeighted(overlay, alpha, roi, 1.0 - alpha, 0)
+
+    img[y1:y2, x1:x2] = blended
+
+
+def ui_scale_for_image(h: int, w: int) -> float:
+    """
+    Returns a UI scale factor based on image height.
+    Tuned so ~1000px-tall images use ~1.0, 6k px -> ~5–6x.
+    """
+    base = max(h, w)
+    # scale grows with height; clamp to avoid extremes
+    s = max(0.7, min(6.0, h / 1000.0))
+    return s
+
+def put_panel_title(img: np.ndarray, text: str, origin=(10, 26), scale: float = 1.0):
+    x, y = origin
+    fs = 0.8 * scale
+    thick = max(2, int(2 * scale))
+    cv2.putText(img, text, (x+1, y+1), cv2.FONT_HERSHEY_SIMPLEX, fs, (0,0,0), thick+1, cv2.LINE_AA)
+    cv2.putText(img, text, (x, y),     cv2.FONT_HERSHEY_SIMPLEX, fs, (245,245,245), thick, cv2.LINE_AA)
+
+def put_counts_legend(
+    img: np.ndarray,
+    items: list[tuple[str, tuple[int,int,int]]],
+    origin=(10, 56),
+    scale: float = 1.0,
+    bg_alpha: float = 0.35,
+):
+    """
+    Translucent legend panel, sizes scale with `scale`.
+    """
+    # derived sizes
+    line_h = int(22 * scale)
+    pad_t, pad_r, pad_b, pad_l = [int(v * scale) for v in (8, 12, 8, 12)]
+    chip = int(14 * scale)
+    font_scale = 0.55 * scale
+    font_thick = max(1, int(1 * scale))
+
+    x0, y0 = origin
+    # compute panel width
+    widths = []
+    for label, _ in items:
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thick)
+        widths.append(tw + chip + int(10 * scale))
+    w = max(widths) if widths else int(120 * scale)
+    h = (line_h * len(items)) if items else int(20 * scale)
+
+    x1 = x0 + w + pad_r + pad_l
+    y1 = y0 + h + pad_t + pad_b
+    draw_filled_rect_alpha(img, (x0, y0), (x1, y1), (0,0,0), alpha=bg_alpha)
+
+    # rows
+    y = y0 + pad_t + line_h - int(6 * scale)
+    x = x0 + pad_l
+    for label, color in items:
+        # color chip
+        cv2.rectangle(img, (x, y - chip + int(2*scale)), (x + chip, y + int(2*scale)), color, thickness=-1)
+        # text
+        cv2.putText(img, label, (x + chip + int(6*scale), y),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (240,240,240),
+                    font_thick, cv2.LINE_AA)
+        y += line_h
+
+# ----------------------------- BBox and Metrics ----------------------------------
 
 def _iou_xyxy_np(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """NumPy IoU for xyxy boxes. a:[Na,4], b:[Nb,4] -> [Na,Nb]"""

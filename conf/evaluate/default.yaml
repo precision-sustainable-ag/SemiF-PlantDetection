@@ -7,7 +7,8 @@ tasks:
 split: test #val
 save_json: true
 run_version: 1 # looks in runs_1; is ignored if custom_path is provided
-custom_path: /home/ajajoo3/SemiF-PlantDetection/new_training_best.pt # Provide a custom model path, if provided, ignores run_version
+# Subdirectory stem for saving results; actual dir will have an incrementing suffix
+save_subdir_stem: my_evaluation_results
 
 # Device selection
 # - "auto": pick best visible GPU
@@ -23,13 +24,13 @@ scales: [0.15, 0.25, 0.5, 1.0, 1.5]
 # Per-scale filtering 
 per_scale_conf: 0.0
 per_scale_iou: 1.0
-per_scale_max_det: 300
+per_scale_max_det: 2000
 
 # Final postprocess thresholds (single NMS after concatenation)
 # These map to Ultralytics' conf/iou
-conf: 0.85           # final_conf
-iou: 0.65            # final_iou
-final_max_det: 500
+conf: 0.7           # final_conf
+iou: 0.55            # final_iou
+final_max_det: 2000
 
 # Optional extra NMS right after WBF (before Ultralytics NMS)
 post_fusion_nms:
@@ -40,16 +41,22 @@ post_fusion_nms:
 draw_labels: true
 draw_boxes: true
 draw_conf: true
-line_width: 5
-font_size: 4.0
+line_width: 3
+font_size: .5
 
 # --- label-based evaluation ---
 eval_labels:
   enabled: true              # required
-  iou_thresholds: [0.50]     # or [0.50,0.55,...,0.95] for COCO-style mAP
-  per_image: false           # true = also log per-image precision/recall
+  iou_thresholds: [0.50, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]     # or [0.50,0.55,...,0.95] for COCO-style mAP
+  per_image: true           # true = also log per-image precision/recall
   labels_dir: null
   save_json: true            # write metrics JSON next to the images/ folder
+  viz_single_image_preds: false  # save predicted images with boxes to save_dir/preds
+  viz_side_by_side: 
+    enabled: true # Save side-by-side GT and Pred images with TP/FP/FN coloring
+    save_full_res: false # If true, saves full resolution images; longer but higher quality
+    save_preview: true # If true, saves preview; faster but lower quality
+
 
 # Optional class name map (use model.names if null)
 names: null
