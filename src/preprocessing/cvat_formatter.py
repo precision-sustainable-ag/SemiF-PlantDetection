@@ -67,6 +67,8 @@ class CVATFormatter:
         # Parallel processing configuration
         self.parallel = cfg.cvat.get('parallel', False)
         self.parallel_workers = min(cfg.cvat.get('parallel_workers', cpu_count()), cpu_count())
+
+        self.annotation_source = cfg.cvat.annotation_source
         
         log.info(f"Initialized CVAT formatter with output directory: {self.cvat_output_folder}")
         log.info(f"Using class mapping from config: {self.class_mapping}")
@@ -142,15 +144,23 @@ class CVATFormatter:
         # Save resized image
         cv2.imwrite(str(dest_image_path), resized_image)
         
-        # Parse annotations
+        annotation_file_path = self.labels_dir / f"{image_id}.txt"
+
+        if self.annotation_source == "local":
+            # Read YOLO .txt directly from local annotations folder
+            local_label_path = self.dataset_path.parent / "annotations" / "labels" / "train" / f"{image_id}.txt"
+            if not local_label_path.exists():
+                log.warning(f"Local annotation file not found: {local_label_path}")
+                return
+            shutil.copy2(local_label_path, annotation_file_path)
+            return
+
+        # Else: fall back to CSV JSON annotations
         try:
             annotations = json.loads(row['annotations'])
         except (json.JSONDecodeError, TypeError):
             log.error(f"Error parsing annotations for image {image_id}")
             return
-        
-        # Create annotation file
-        annotation_file_path = self.labels_dir / f"{image_id}.txt"
         
         with open(annotation_file_path, 'w') as f:
             for annotation in annotations:

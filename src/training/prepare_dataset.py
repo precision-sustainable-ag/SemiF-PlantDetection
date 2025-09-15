@@ -1,6 +1,7 @@
 import os
 import cv2
 import json
+import random
 import shutil
 import logging
 import pandas as pd
@@ -36,6 +37,10 @@ class PrepareDataset:
 
         self.preprocess_images_path = Path(self.cfg.paths.preprocess.image_dir)
         self.preprocess_annotations_path = Path(self.cfg.paths.preprocess.label_dir)
+        self.use_preprocess_annotations = self.cfg.train.prepare_dataset.use_preprocess_annotations
+
+        if self.use_preprocess_annotations:
+            log.info("Will prefer annotations from PREPROCESS folder over LTS.")
 
         # Parallel processing configuration
         self.parallel = self.cfg.train.get('parallel', False)
@@ -83,42 +88,65 @@ class PrepareDataset:
                 log.warning(f"Failed to clean up preprocess directories: {e}")
 
     def copy_and_filter_manual_annotation(self, src_path, dest_path, image_id):
-        non_target_id = int(self.class_mapping["non_target"])
-        colorchecker_id = int(self.class_mapping["color_checker"])
+        plant_id        = int(self.class_mapping["plant"])         # 0
+        non_target_id   = int(self.class_mapping["non_target"])    # 1
+        color_checker_id= int(self.class_mapping["color_checker"]) # 2
 
         with open(src_path, 'r') as src, open(dest_path, 'w') as dest:
             for line in src:
                 if not line.strip():
                     continue
                 parts = line.strip().split()
-                class_id = int(parts[0])
-                
-                if class_id == non_target_id:
-                    log.debug(f"Skipping non_target in manual annotation for {image_id}")
+                base_id = int(parts[0])
+
+                # 1) Drop non-targets first
+                if self.ignore_non_targets and base_id == non_target_id:
                     continue
-                
-                # remap colorchecker from original to 1
-                if class_id == colorchecker_id:
-                    mapped_id = 1
-                else:  # plant stays 0
-                    mapped_id = 0
-                
-                parts[0] = str(mapped_id)
+
+                # 2) Remap (only after drops)
+                if self.ignore_non_targets:
+                    if base_id == color_checker_id:
+                        parts[0] = "1"   # color_checker -> 1
+                    elif base_id == plant_id:
+                        parts[0] = "0"   # plant stays 0
+                    else:
+                        # unknown class → skip for safety
+                        continue
+                else:
+                    # keep original ids (0,1,2)
+                    parts[0] = str(base_id)
+
                 dest.write(" ".join(parts) + "\n")
     
     def map_class_ids(self, annotation):
         """
-        Maps annotation to YOLO class id or None if it should be ignored.
+        Returns the FINAL YOLO class id (or None to skip) based on:
+        - CLASS_MAPPING base ids
+        - self.ignore_non_targets flag
         """
-        if annotation.get('non_target_weed') is True:
-            if annotation.get('non_target_weed_pred_conf', 0) > 0.99:
-                return None  # ignore non_target
-            else:
-                return int(self.class_mapping["plant"])
+        plant_id        = int(self.class_mapping["plant"])
+        non_target_id   = int(self.class_mapping["non_target"])
+        color_checker_id= int(self.class_mapping["color_checker"])
+
+        # Decide base class id
+        if annotation.get('non_target_weed') is True and annotation.get('non_target_weed_pred_conf', 0) > 0.99:
+            base_id = non_target_id
         elif annotation.get('category_class_id') == 28:
-            return int(self.class_mapping["color_checker"])
+            base_id = color_checker_id
         else:
-            return int(self.class_mapping["plant"])
+            base_id = plant_id
+
+        # 1) Drop non-targets first
+        if self.ignore_non_targets and base_id == non_target_id:
+            return None
+
+        # 2) Remap
+        if self.ignore_non_targets:
+            if base_id == color_checker_id:
+                return 1
+            return 0  # everything else that remains is plant
+        else:
+            return base_id
 
     def process_image(self, row, type):
         """
@@ -137,27 +165,41 @@ class PrepareDataset:
         # Destination paths for the image and label in Ultralytics format
         dest_image_path = self.train_data_path / type / 'images' / f"{image_id}.jpg"
         dest_label_path = self.train_data_path / type / 'labels' / f"{image_id}.txt"
+
+        # Source preprocess label (expects txt under cfg.paths.preprocess.label_dir)
+        preprocess_label_path = Path(self.cfg.paths.preprocess.label_dir) / 'labels' / 'train' / f"{image_id}.txt"
         
         # Copy image if it exists
-        if train_image_path.exists():
-            source_image_path = train_image_path
-        elif preprocess_image_path.exists():
+        if self.use_preprocess_annotations and preprocess_image_path.exists():
             source_image_path = preprocess_image_path
+        elif train_image_path.exists():
+            source_image_path = train_image_path
         else:
             log.warning(f"Source image not found in train or preprocess: {image_id}, will need to copy from LTS")
             # TODO: try to get it from LTS if not exists
             return
         
-        # Only copy if source and destination are different paths
         if source_image_path.resolve() != dest_image_path.resolve():
             shutil.copy(source_image_path, dest_image_path)
         
-        if image_id in self.human_annotations:
+        if self.use_preprocess_annotations and preprocess_label_path.exists():
+            # Use preprocess label
+            if self.ignore_non_targets:
+                self.copy_and_filter_manual_annotation(preprocess_label_path, dest_label_path, image_id)
+                log.debug(f"Labels from PREPROCESS (filtered): {preprocess_label_path.name}")
+            else:
+                shutil.copy(preprocess_label_path, dest_label_path)
+                log.debug(f"Labels from PREPROCESS: {preprocess_label_path.name}")
+
+        elif image_id in self.human_annotations:
+            # Fallback to LTS manual labels
             src = self.human_annotations[image_id]
             if self.ignore_non_targets:
                 self.copy_and_filter_manual_annotation(src, dest_label_path, image_id)
+                log.debug(f"Labels from LTS (filtered): {Path(src).name}")
             else:
                 shutil.copy(src, dest_label_path)
+                log.debug(f"Labels from LTS: {Path(src).name}")
         else:
             log.warning(f'Manual annotation not found for {image_id}')
             # Only read image if annotations need to be normalized
