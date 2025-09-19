@@ -106,7 +106,7 @@ def draw_boxes_on_image_with_colors(
                     (255, 255, 255), max(1, line_thickness-1), cv2.LINE_AA)
     return out
 
-def draw_filled_rect_alpha(img: np.ndarray, pt1, pt2, color_bgr, alpha: float = 0.4):
+def draw_filled_rect_alpha(img: np.ndarray, pt1, pt2, color_bgr, alpha: float = 0.4) -> None:
     """
     Robust ROI alpha blend. Works on uint8 or float32 images.
     Draws in-place.
@@ -152,7 +152,7 @@ def ui_scale_for_image(h: int, w: int) -> float:
     s = max(0.7, min(6.0, h / 1000.0))
     return s
 
-def put_panel_title(img: np.ndarray, text: str, origin=(10, 26), scale: float = 1.0):
+def put_panel_title(img: np.ndarray, text: str, origin=(10, 26), scale: float = 1.0) -> None:
     x, y = origin
     fs = 0.8 * scale
     thick = max(2, int(2 * scale))
@@ -165,7 +165,7 @@ def put_counts_legend(
     origin=(10, 56),
     scale: float = 1.0,
     bg_alpha: float = 0.35,
-):
+) -> None:
     """
     Translucent legend panel, sizes scale with `scale`.
     """
@@ -338,7 +338,7 @@ class DetectionEvaluator:
         ap = _voc_ap(rec, prec)
         return {"AP": ap, "precision": prec.tolist(), "recall": rec.tolist(), "npos": int(npos)}
     
-    def _greedy_match_single_class(self, preds_c, gts_c, iou_thr: float):
+    def _greedy_match_single_class(self, preds_c, gts_c, iou_thr: float) -> tuple[int, int, int, list[tuple[int, int]], np.ndarray, np.ndarray]:
         """
         preds_c: (P, 5) -> [x1,y1,x2,y2,score]
         gts_c:   (G, 4)
@@ -373,7 +373,7 @@ class DetectionEvaluator:
         return tp, fp, fn, matches, best_iou_pred, best_iou_gt
 
 
-    def _hungarian_match_single_class(self, preds_c, gts_c, iou_thr: float):
+    def _hungarian_match_single_class(self, preds_c, gts_c, iou_thr: float) -> tuple[int, int, int, list[tuple[int, int]], np.ndarray, np.ndarray]:
         """
         Optimal one-to-one assignment w.r.t. cost built from IoU (and optionally score).
         Returns same tuple as greedy version.
@@ -425,7 +425,7 @@ class DetectionEvaluator:
 
         return tp, fp, fn, matched, best_iou_pred, best_iou_gt
     
-    def _match_one_class(self, preds_c, gts_c, iou_thr: float):
+    def _match_one_class(self, preds_c, gts_c, iou_thr: float) -> tuple[int, int, int, list[tuple[int, int]], np.ndarray, np.ndarray]:
         if self.match_algo == "hungarian":
             return self._hungarian_match_single_class(preds_c, gts_c, iou_thr)
         return self._greedy_match_single_class(preds_c, gts_c, iou_thr)
@@ -434,7 +434,7 @@ class DetectionEvaluator:
         self, image_id: str,
         pred_boxes: np.ndarray, pred_scores: np.ndarray, pred_classes: np.ndarray,
         gt_boxes:   np.ndarray, gt_classes:   np.ndarray
-    ):
+    ) -> None:
         """
         Compute per-image TP/FP/FN at each IoU threshold in self.iou_thresholds.
         Stores:

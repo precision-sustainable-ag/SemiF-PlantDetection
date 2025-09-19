@@ -242,7 +242,7 @@ def _resolve_test_images(cfg: DictConfig) -> Path:
     test_rel = data_cfg.get(cfg.evaluate.split)
 
     if not test_rel:
-        raise ValueError(f"No 'test:' field found in data.yaml at {data_yaml_path}")
+        raise ValueError(f"No '{test_rel}:' field found in data.yaml at {data_yaml_path}")
 
     test_path = Path(test_rel)
     if not test_path.is_absolute():
@@ -250,7 +250,7 @@ def _resolve_test_images(cfg: DictConfig) -> Path:
     test_path = test_path.resolve()
 
     if not test_path.is_dir():
-        raise FileNotFoundError(f"'test:' path does not exist or is not a directory: {test_path}")
+        raise FileNotFoundError(f"'{test_rel}:' path does not exist or is not a directory: {test_path}")
 
     return test_path
 
@@ -339,11 +339,72 @@ def _read_yolo_labels(txt_path: Path, img_w: int, img_h: int) -> tuple[np.ndarra
         return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int64)
     return np.array(boxes, dtype=np.float32), np.array(clses, dtype=np.int64)
 
+def edge_aware_filter(
+    boxes_xyxy: np.ndarray,   # [N,4] absolute pixels
+    scores: np.ndarray,       # [N]
+    img_wh: tuple[int, int],  # (W, H)
+    *,
+    base_conf: float = 0.70,      # normal final conf
+    edge_band_rel: float = 0.08,  # within 8% of the nearest edge = edge zone
+    min_factor: float = 0.60,     # allow down to 60% of base_conf at the edge
+    taper_rel: float = 0.20       # linearly ramp back to base_conf by 20% distance
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Per-box dynamic threshold:
+        thr_i = base_conf * f(d_edge_rel)
+      where d_edge_rel in [0, inf) is the center's normalized distance to the closest edge.
+      If d_edge_rel <= edge_band_rel:
+          thr_i = base_conf * min_factor
+      If d_edge_rel >= taper_rel:
+          thr_i = base_conf
+      Else linearly interpolate between those.
+
+    Returns:
+      keep_mask: [N] bool
+      dyn_thr:   [N] per-box thresholds used (float32)
+    """
+    if len(boxes_xyxy) == 0:
+        return np.zeros((0,), dtype=bool), np.zeros((0,), dtype=np.float32)
+
+    W, H = map(float, img_wh)
+    cx = (boxes_xyxy[:, 0] + boxes_xyxy[:, 2]) * 0.5
+    cy = (boxes_xyxy[:, 1] + boxes_xyxy[:, 3]) * 0.5
+
+    # distance (in pixels) from box center to the nearest frame edge
+    d_left   = cx
+    d_right  = W - cx
+    d_top    = cy
+    d_bottom = H - cy
+    d_edge_px = np.minimum.reduce([d_left, d_right, d_top, d_bottom])
+
+    # normalize by the smaller image dimension so it’s scale-invariant
+    min_side = min(W, H)
+    d_edge_rel = d_edge_px / (min_side + 1e-9)  # in [0, ~0.5]
+
+    # piecewise-linear threshold factor
+    #   close to edge → min_factor
+    #   far from edge → 1.0
+    #   between edge_band_rel and taper_rel → linear ramp
+    f = np.ones_like(d_edge_rel, dtype=np.float32)
+    near = d_edge_rel <= edge_band_rel
+    far  = d_edge_rel >= taper_rel
+    mid  = ~(near | far)
+
+    f[near] = float(min_factor)
+    if np.any(mid):
+        # linear interpolation from (edge_band_rel -> min_factor) to (taper_rel -> 1.0)
+        t = (d_edge_rel[mid] - edge_band_rel) / max(taper_rel - edge_band_rel, 1e-6)
+        f[mid] = min_factor + t * (1.0 - min_factor)
+
+    dyn_thr = (base_conf * f).astype(np.float32)
+    keep_mask = scores >= dyn_thr
+    return keep_mask, dyn_thr
+
 # ------------------------------- Predictor ------------------------------------
 
 class YOLOMultiscalePredictor:
     """
-    Multiscale predictor for Ultralytics YOLO (v8/v11).
+    Multiscale predictor for Ultralytics YOLO.
     Strategy:
       - Run predict() at multiple imgsz values with conf=0, iou=1 (keep all)
       - Concatenate all detections (already mapped to original image coords)
@@ -533,22 +594,34 @@ class YOLOMultiscalePredictor:
             # first tier - multi-scale raw predictions
             merged = self._multiscale_raw_preds(im0)
 
-            # second tier - filtering detections
-            results, _raw = self._postprocess_det(merged, im0, path)
+            # second tier - edge aware conf filter
+            H, W = im0.shape[:2]
+            if merged.numel():
+                m_np = merged.detach().cpu().numpy()
+                boxes_xyxy = m_np[:, :4].astype(np.float32)
+                scores     = m_np[:, 4].astype(np.float32)
 
-            # log.info(f"Detections: {results[0].boxes.shape[0]} boxes")
-
-            # raw_eval = _raw.clone() if _raw.numel() else _raw
-
-            log.info(f"  {_raw.shape[0]} boxes before WBF")
-            if _raw.numel():
-                boxes  = _raw[:, :4]
-                scores = _raw[:, 4]
-                clses  = _raw[:, 5]
-                _raw = weighted_boxes_fusion(
-                    boxes, scores, clses, iou_thr=0.65, score_power=1.0, conf_type="max"
+                # Using edge-aware thresholds; base on final_conf
+                keep_mask, dyn_thr = edge_aware_filter(
+                    boxes_xyxy, scores, img_wh=(W, H),
+                    base_conf=self.final_conf,  
+                    edge_band_rel=0.08,          
+                    min_factor=0.50,
+                    taper_rel=0.20
                 )
-            log.info(f"  {_raw.shape[0]} boxes after WBF")
+                if keep_mask.any():
+                    merged = merged[torch.from_numpy(keep_mask).to(merged.device)]
+                else:
+                    merged = torch.zeros((0, 6), device=merged.device, dtype=merged.dtype)
+
+            _raw = merged
+            log.info(f"{_raw.shape[0]} boxes before WBF")
+            if _raw.numel():
+                _raw = weighted_boxes_fusion(
+                    _raw[:, :4], _raw[:, 4], _raw[:, 5],
+                    iou_thr=0.65, score_power=1.0, conf_type="max"
+                )
+            log.info(f"{_raw.shape[0]} boxes after WBF")
 
             # Optional third-tier NMS
             if self.post_fusion_nms_enabled and _raw.numel():
@@ -560,7 +633,11 @@ class YOLOMultiscalePredictor:
                     iou_threshold=self.post_fusion_nms_iou,
                 )
                 _raw = _raw[keep]
-                log.info(f"  {len(_raw)} boxes after extra NMS")
+
+                if _raw.shape[0] > self.final_max_det:
+                    order = torch.argsort(_raw[:, 4], descending=True)
+                    _raw = _raw[order[: self.final_max_det]]
+                log.info(f"{_raw.shape[0]} boxes after final NMS")
 
             final_results = [Results(
                 boxes=_raw.detach().cpu() if _raw.numel() else _raw,  # [N,6]: xyxy, conf, cls

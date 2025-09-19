@@ -21,9 +21,12 @@ image_size: 2880
 batch_size: 8
 num_workers: 16
 lr0: 0.001
+lrf: 0.01
 weight_decay: 0.001
 warmup_epochs: 3
 patience: 50
+box: 20
+cls: 0.8
 cache: true
 
 # augmentations
@@ -38,6 +41,7 @@ translate: 0.1
 hsv_h: 0.015
 hsv_s: 0.7
 hsv_v: 0.4
+mixup: 0.5
 
 # gpu configs
 device: "5, 6, 7, 8"
