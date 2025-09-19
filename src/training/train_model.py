@@ -6,7 +6,6 @@ import torch
 import yaml
 from omegaconf import DictConfig
 from ultralytics import YOLO
-from src.utils.utils import get_latest_checkpoint
 from src.utils.constants import CLASS_MAPPING
 
 
@@ -102,12 +101,14 @@ class TrainModel:
             flipud=self.cfg.train.flipud,
             fliplr=self.cfg.train.fliplr,
             mosaic=self.cfg.train.mosaic,
+            close_mosaic=60,
             mixup=self.cfg.train.mixup,
             scale=self.cfg.train.scale,
             shear=self.cfg.train.shear,
             degrees=self.cfg.train.degrees,
             perspective=self.cfg.train.perspective,
             translate=self.cfg.train.translate,
+            cutmix=self.cfg.train.cutmix,
             hsv_h=self.cfg.train.hsv_h,
             hsv_s=self.cfg.train.hsv_s,
             hsv_v=self.cfg.train.hsv_v,
